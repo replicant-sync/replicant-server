@@ -23,7 +23,6 @@ defmodule ReplicantServer.Documents.Document do
     |> cast(attrs, [:id, :user_id, :content, :sync_revision, :content_hash, :title, :size_bytes, :deleted_at])
     |> validate_required([:id, :user_id, :content])
     |> foreign_key_constraint(:user_id)
-    |> optimistic_lock(:sync_revision)
   end
 
   def create_changeset(document, attrs) do
@@ -32,5 +31,6 @@ defmodule ReplicantServer.Documents.Document do
     |> validate_required([:id, :user_id, :content])
     |> put_change(:sync_revision, 1)
     |> foreign_key_constraint(:user_id)
+    |> unique_constraint(:id, name: :documents_pkey)
   end
 end

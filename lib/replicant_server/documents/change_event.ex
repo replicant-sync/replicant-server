@@ -2,13 +2,15 @@ defmodule ReplicantServer.Documents.ChangeEvent do
   use Ecto.Schema
   import Ecto.Changeset
 
+  alias ReplicantServer.Ecto.JsonValue
+
   @primary_key {:sequence, :id, autogenerate: true}
   @foreign_key_type :binary_id
 
   schema "change_events" do
     field :event_type, :string
-    field :forward_patch, :map
-    field :reverse_patch, :map
+    field :forward_patch, JsonValue
+    field :reverse_patch, JsonValue
     field :applied, :boolean, default: true
     field :server_timestamp, :utc_datetime_usec
 
