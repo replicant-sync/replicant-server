@@ -1,0 +1,34 @@
+# Git
+.git
+.gitignore
+
+# Elixir/Phoenix
+_build/
+deps/
+*.ez
+*.beam
+
+# Node (if any assets)
+node_modules/
+
+# Test and dev
+/test/
+/cover/
+/doc/
+
+# IDE
+.elixir_ls/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kamal
+.kamal/
+
+# Docker
+Dockerfile*
+docker-compose*

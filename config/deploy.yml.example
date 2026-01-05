@@ -1,0 +1,71 @@
+# Kamal deployment configuration
+# See: https://kamal-deploy.org/docs/configuration
+
+service: replicant-server
+
+image: your-dockerhub-username/replicant-server
+
+servers:
+  web:
+    - your-server-ip  # e.g., 123.45.67.89
+    labels:
+      traefik.http.routers.replicant-server.rule: Host(`your-domain.com`)
+      traefik.http.routers.replicant-server-secure.entrypoints: websecure
+      traefik.http.routers.replicant-server-secure.rule: Host(`your-domain.com`)
+      traefik.http.routers.replicant-server-secure.tls: true
+      traefik.http.routers.replicant-server-secure.tls.certresolver: letsencrypt
+
+registry:
+  username: your-dockerhub-username
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+env:
+  clear:
+    PHX_HOST: your-domain.com
+    PORT: 4000
+  secret:
+    - DATABASE_URL
+    - SECRET_KEY_BASE
+
+# Traefik handles SSL and routing
+traefik:
+  options:
+    publish:
+      - "443:443"
+    volume:
+      - "/letsencrypt:/letsencrypt"
+  args:
+    entryPoints.web.address: ":80"
+    entryPoints.websecure.address: ":443"
+    entryPoints.web.http.redirections.entryPoint.to: websecure
+    entryPoints.web.http.redirections.entryPoint.scheme: https
+    certificatesResolvers.letsencrypt.acme.email: your-email@example.com
+    certificatesResolvers.letsencrypt.acme.storage: /letsencrypt/acme.json
+    certificatesResolvers.letsencrypt.acme.httpchallenge: true
+    certificatesResolvers.letsencrypt.acme.httpchallenge.entrypoint: web
+
+# PostgreSQL as an accessory (or use managed DB)
+accessories:
+  db:
+    image: postgres:16
+    host: your-server-ip
+    port: 5432
+    env:
+      clear:
+        POSTGRES_DB: replicant_server_prod
+      secret:
+        - POSTGRES_PASSWORD
+    directories:
+      - data:/var/lib/postgresql/data
+
+# Health check
+healthcheck:
+  path: /health
+  port: 4000
+  interval: 10s
+
+# Deploy hooks - run migrations
+hooks:
+  post-deploy: |
+    docker exec $(docker ps -q -f name=replicant-server-web) /app/bin/migrate

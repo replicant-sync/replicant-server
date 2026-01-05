@@ -5,6 +5,11 @@ defmodule ReplicantServerWeb.Router do
     plug :accepts, ["json"]
   end
 
+  # Health check for load balancers/Kamal
+  scope "/health" do
+    get "/", ReplicantServerWeb.HealthController, :index
+  end
+
   scope "/api", ReplicantServerWeb do
     pipe_through :api
   end

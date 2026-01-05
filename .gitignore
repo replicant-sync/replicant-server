@@ -25,3 +25,6 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 replicant_server-*.tar
 
+# Kamal secrets and config (contains passwords/server details)
+.kamal/secrets
+config/deploy.yml
