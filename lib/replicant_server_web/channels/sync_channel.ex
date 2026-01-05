@@ -53,7 +53,7 @@ defmodule ReplicantServerWeb.SyncChannel do
           content_hash: document.content_hash
         })
 
-        {:reply, {:ok, %{document_id: document.id, sync_revision: document.sync_revision}},
+        {:reply, {:ok, %{document_id: document.id, sync_revision: document.sync_revision, content_hash: document.content_hash}},
          socket}
 
       {:error, :conflict, existing} ->
@@ -79,9 +79,9 @@ defmodule ReplicantServerWeb.SyncChannel do
     user_id = socket.assigns.user_id
     document_id = payload["document_id"]
     patch = payload["patch"]
-    expected_revision = payload["expected_revision"]
+    content_hash = payload["content_hash"]
 
-    case Documents.update_document(user_id, document_id, patch, expected_revision) do
+    case Documents.update_document(user_id, document_id, patch, content_hash) do
       {:ok, document} ->
         broadcast_except(socket, "document_updated", %{
           document_id: document.id,
@@ -92,11 +92,11 @@ defmodule ReplicantServerWeb.SyncChannel do
 
         {:reply, {:ok, %{sync_revision: document.sync_revision}}, socket}
 
-      {:error, :version_mismatch, current} ->
+      {:error, :hash_mismatch, current} ->
         {:reply,
          {:error,
           %{
-            reason: "version_mismatch",
+            reason: "hash_mismatch",
             current_revision: current.sync_revision,
             current_content: current.content,
             current_hash: current.content_hash

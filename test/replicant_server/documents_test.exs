@@ -42,7 +42,7 @@ defmodule ReplicantServer.DocumentsTest do
   end
 
   describe "update_document" do
-    test "updates with optimistic locking", %{user: user} do
+    test "updates with valid content_hash", %{user: user} do
       {:ok, doc} =
         Documents.create_document(user.id, %{
           id: UUID.uuid4(),
@@ -51,12 +51,12 @@ defmodule ReplicantServer.DocumentsTest do
 
       patch = [%{"op" => "replace", "path" => "/title", "value" => "Updated"}]
 
-      assert {:ok, updated} = Documents.update_document(user.id, doc.id, patch, 1)
+      assert {:ok, updated} = Documents.update_document(user.id, doc.id, patch, doc.content_hash)
       assert updated.content["title"] == "Updated"
       assert updated.sync_revision == 2
     end
 
-    test "fails on version mismatch", %{user: user} do
+    test "fails on hash mismatch", %{user: user} do
       {:ok, doc} =
         Documents.create_document(user.id, %{
           id: UUID.uuid4(),
@@ -65,8 +65,8 @@ defmodule ReplicantServer.DocumentsTest do
 
       patch = [%{"op" => "replace", "path" => "/title", "value" => "Updated"}]
 
-      assert {:error, :version_mismatch, _current} =
-               Documents.update_document(user.id, doc.id, patch, 999)
+      assert {:error, :hash_mismatch, _current} =
+               Documents.update_document(user.id, doc.id, patch, "wrong_hash")
     end
 
     test "logs forward and reverse patches", %{user: user} do
@@ -77,7 +77,7 @@ defmodule ReplicantServer.DocumentsTest do
         })
 
       patch = [%{"op" => "replace", "path" => "/title", "value" => "Updated"}]
-      {:ok, _} = Documents.update_document(user.id, doc.id, patch, 1)
+      {:ok, _} = Documents.update_document(user.id, doc.id, patch, doc.content_hash)
 
       events = Documents.get_changes_since(user.id, 0)
       update_event = Enum.find(events, &(&1.event_type == "update"))

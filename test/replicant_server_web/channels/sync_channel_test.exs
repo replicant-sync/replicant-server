@@ -123,32 +123,32 @@ defmodule ReplicantServerWeb.SyncChannelTest do
           "content" => %{"title" => "Original"}
         })
 
-      assert_reply ref, :ok, _
+      assert_reply ref, :ok, %{content_hash: content_hash}
 
-      %{socket: socket, doc_id: doc_id}
+      %{socket: socket, doc_id: doc_id, content_hash: content_hash}
     end
 
-    test "updates document with valid revision", %{socket: socket, doc_id: doc_id} do
+    test "updates document with valid content_hash", %{socket: socket, doc_id: doc_id, content_hash: content_hash} do
       ref =
         push(socket, "update_document", %{
           "document_id" => doc_id,
           "patch" => [%{op: "replace", path: "/title", value: "Updated"}],
-          "expected_revision" => 1
+          "content_hash" => content_hash
         })
 
       assert_reply ref, :ok, %{sync_revision: 2}
       assert_broadcast "document_updated", %{document_id: ^doc_id, sync_revision: 2}
     end
 
-    test "returns version_mismatch for wrong revision", %{socket: socket, doc_id: doc_id} do
+    test "returns hash_mismatch for wrong content_hash", %{socket: socket, doc_id: doc_id} do
       ref =
         push(socket, "update_document", %{
           "document_id" => doc_id,
           "patch" => [%{op: "replace", path: "/title", value: "Updated"}],
-          "expected_revision" => 999
+          "content_hash" => "wrong_hash"
         })
 
-      assert_reply ref, :error, %{reason: "version_mismatch", current_revision: 1}
+      assert_reply ref, :error, %{reason: "hash_mismatch", current_revision: 1}
     end
   end
 

@@ -88,19 +88,22 @@ defmodule ReplicantServer.Documents do
   end
 
   @doc """
-  Updates a document with optimistic locking and event logging.
+  Updates a document with content hash validation and event logging.
 
   The patch should be a JSON Patch (RFC 6902) operation list.
-  Returns `{:ok, document}` or `{:error, :version_mismatch, current_doc}` or `{:error, reason}`.
+  Validates that the client's content_hash matches the current document's hash
+  to ensure the client was working with the correct base content.
+  Returns `{:ok, document}` or `{:error, :hash_mismatch, current_doc}` or `{:error, reason}`.
   """
-  def update_document(user_id, document_id, patch, expected_revision) do
+  def update_document(user_id, document_id, patch, content_hash) do
     case get_user_document(user_id, document_id) do
       nil ->
         {:error, :not_found}
 
       document ->
-        if document.sync_revision != expected_revision do
-          {:error, :version_mismatch, document}
+        current_hash = document.content_hash
+        if content_hash != nil and current_hash != content_hash do
+          {:error, :hash_mismatch, document}
         else
           apply_update(document, patch)
         end
