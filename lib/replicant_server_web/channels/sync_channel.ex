@@ -149,7 +149,7 @@ defmodule ReplicantServerWeb.SyncChannel do
     doc_list =
       Enum.map(documents, fn doc ->
         %{
-          id: doc.id,
+          document_id: doc.id,
           content: doc.content,
           sync_revision: doc.sync_revision,
           content_hash: doc.content_hash,
