@@ -47,13 +47,13 @@ defmodule ReplicantServerWeb.SyncChannel do
     case Documents.create_document(user_id, payload) do
       {:ok, document} ->
         broadcast_except(socket, "document_created", %{
-          document_id: document.id,
+          id: document.id,
           content: document.content,
           sync_revision: document.sync_revision,
           content_hash: document.content_hash
         })
 
-        {:reply, {:ok, %{document_id: document.id, sync_revision: document.sync_revision, content_hash: document.content_hash}},
+        {:reply, {:ok, %{id: document.id, sync_revision: document.sync_revision, content_hash: document.content_hash}},
          socket}
 
       {:error, :conflict, existing} ->
@@ -77,14 +77,14 @@ defmodule ReplicantServerWeb.SyncChannel do
   @impl true
   def handle_in("update_document", payload, socket) do
     user_id = socket.assigns.user_id
-    document_id = payload["document_id"]
+    document_id = payload["id"]
     patch = payload["patch"]
     content_hash = payload["content_hash"]
 
     case Documents.update_document(user_id, document_id, patch, content_hash) do
       {:ok, document} ->
         broadcast_except(socket, "document_updated", %{
-          document_id: document.id,
+          id: document.id,
           patch: patch,
           sync_revision: document.sync_revision,
           content_hash: document.content_hash
@@ -117,12 +117,12 @@ defmodule ReplicantServerWeb.SyncChannel do
   @impl true
   def handle_in("delete_document", payload, socket) do
     user_id = socket.assigns.user_id
-    document_id = payload["document_id"]
+    document_id = payload["id"]
 
     case Documents.delete_document(user_id, document_id) do
       {:ok, _document} ->
         broadcast_except(socket, "document_deleted", %{
-          document_id: document_id
+          id: document_id
         })
 
         {:reply, :ok, socket}
@@ -149,7 +149,7 @@ defmodule ReplicantServerWeb.SyncChannel do
     doc_list =
       Enum.map(documents, fn doc ->
         %{
-          document_id: doc.id,
+          id: doc.id,
           content: doc.content,
           sync_revision: doc.sync_revision,
           content_hash: doc.content_hash,
@@ -177,7 +177,7 @@ defmodule ReplicantServerWeb.SyncChannel do
       Enum.map(events, fn event ->
         %{
           sequence: event.sequence,
-          document_id: event.document_id,
+          id: event.document_id,
           event_type: event.event_type,
           forward_patch: event.forward_patch,
           reverse_patch: event.reverse_patch,
