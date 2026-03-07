@@ -1,71 +1,55 @@
-# Kamal deployment configuration
+# Kamal v2 deployment configuration for replicant-server
+# Copy to config/deploy.yml and fill in values from .kamal/secrets
 # See: https://kamal-deploy.org/docs/configuration
 
 service: replicant-server
 
-image: your-dockerhub-username/replicant-server
+image: <%= ENV['REGISTRY_URL'] %>/replicant-server
 
 servers:
   web:
-    - your-server-ip  # e.g., 123.45.67.89
-    labels:
-      traefik.http.routers.replicant-server.rule: Host(`your-domain.com`)
-      traefik.http.routers.replicant-server-secure.entrypoints: websecure
-      traefik.http.routers.replicant-server-secure.rule: Host(`your-domain.com`)
-      traefik.http.routers.replicant-server-secure.tls: true
-      traefik.http.routers.replicant-server-secure.tls.certresolver: letsencrypt
+    hosts:
+      - <%= ENV['SERVER_IP'] %>
+
+proxy:
+  ssl: true
+  host: <%= ENV['APP_HOST'] %>
+  app_port: 4000
+  healthcheck:
+    path: /health
+    interval: 3
 
 registry:
-  username: your-dockerhub-username
+  server: registry.digitalocean.com
+  username:
+    - KAMAL_REGISTRY_USERNAME
   password:
     - KAMAL_REGISTRY_PASSWORD
 
 env:
   clear:
-    PHX_HOST: your-domain.com
-    PORT: 4000
+    PORT: "4000"
   secret:
     - DATABASE_URL
     - SECRET_KEY_BASE
+    - PHX_HOST
 
-# Traefik handles SSL and routing
-traefik:
-  options:
-    publish:
-      - "443:443"
-    volume:
-      - "/letsencrypt:/letsencrypt"
-  args:
-    entryPoints.web.address: ":80"
-    entryPoints.websecure.address: ":443"
-    entryPoints.web.http.redirections.entryPoint.to: websecure
-    entryPoints.web.http.redirections.entryPoint.scheme: https
-    certificatesResolvers.letsencrypt.acme.email: your-email@example.com
-    certificatesResolvers.letsencrypt.acme.storage: /letsencrypt/acme.json
-    certificatesResolvers.letsencrypt.acme.httpchallenge: true
-    certificatesResolvers.letsencrypt.acme.httpchallenge.entrypoint: web
+builder:
+  arch: amd64
+  remote: ssh://root@<%= ENV['SERVER_IP'] %>
 
-# PostgreSQL as an accessory (or use managed DB)
+ssh:
+  user: root
+
 accessories:
   db:
     image: postgres:16
-    host: your-server-ip
-    port: 5432
+    host: <%= ENV['SERVER_IP'] %>
     env:
       clear:
         POSTGRES_DB: replicant_server_prod
+        POSTGRES_USER: replicant
       secret:
         - POSTGRES_PASSWORD
     directories:
       - data:/var/lib/postgresql/data
-
-# Health check
-healthcheck:
-  path: /health
-  port: 4000
-  interval: 10s
-
-# Deploy hooks - run migrations
-hooks:
-  post-deploy: |
-    docker exec $(docker ps -q -f name=replicant-server-web) /app/bin/migrate
