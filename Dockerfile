@@ -10,6 +10,9 @@ ARG RUNNER_IMAGE="ubuntu:${UBUNTU_VERSION}"
 
 FROM ${BUILDER_IMAGE} AS builder
 
+# Disable TTY for OTP 28 in Docker
+ENV ELIXIR_ERL_OPTIONS="-noinput"
+
 # Install build dependencies
 RUN apt-get update -y && apt-get install -y build-essential git \
     && apt-get clean && rm -f /var/lib/apt/lists/*_*
@@ -17,13 +20,12 @@ RUN apt-get update -y && apt-get install -y build-essential git \
 # Prepare build dir
 WORKDIR /app
 
+# Set build ENV
+ENV MIX_ENV="prod"
+
 # Install hex + rebar
 RUN mix local.hex --force && \
     mix local.rebar --force
-
-# Set build ENV
-ENV MIX_ENV="prod"
-ENV ELIXIR_ERL_OPTIONS="-noinput"
 
 # Install mix dependencies
 COPY mix.exs mix.lock ./
