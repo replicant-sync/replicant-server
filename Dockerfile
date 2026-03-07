@@ -23,6 +23,7 @@ RUN mix local.hex --force && \
 
 # Set build ENV
 ENV MIX_ENV="prod"
+ENV ELIXIR_ERL_OPTIONS="-noinput"
 
 # Install mix dependencies
 COPY mix.exs mix.lock ./
