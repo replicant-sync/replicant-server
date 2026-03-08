@@ -9,8 +9,7 @@ defmodule ReplicantServer.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
-      deps: deps(),
-      listeners: [Phoenix.CodeReloader]
+      deps: deps()
     ]
   end
 
@@ -52,8 +51,7 @@ defmodule ReplicantServer.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
-      {:mime, "2.0.6", override: true},
-
+      
       # Sync server dependencies
       {:uuid, "~> 1.1"},      # Deterministic UUID v5
       {:jsonpatch, "~> 2.3"}  # JSON Patch RFC 6902

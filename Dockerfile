@@ -1,7 +1,7 @@
 # Dockerfile for Phoenix release
 # Based on https://hexdocs.pm/phoenix/releases.html
 
-ARG ELIXIR_VERSION=1.18.4
+ARG ELIXIR_VERSION=1.19.4
 ARG OTP_VERSION=27.3.4.8
 ARG DEBIAN_VERSION=bookworm-20260223-slim
 
@@ -27,31 +27,19 @@ RUN mix local.hex --force && \
 # Install mix dependencies
 COPY mix.exs mix.lock ./
 RUN mix deps.get --only $MIX_ENV
-RUN mkdir config
 
-# Copy compile-time config files
-COPY config/config.exs config/${MIX_ENV}.exs config/
-RUN mix deps.compile
-
-# Copy application code
+# Copy all source and config, then compile in one step
+COPY config config
 COPY priv priv
 COPY lib lib
-
-# Compile the release
-RUN mix compile
-
-# Copy runtime config
-COPY config/runtime.exs config/
-
-# Create release
 COPY rel rel
-RUN mix release
+RUN mix compile && mix release
 
 # Start a new build stage for the minimal runtime image
 FROM ${RUNNER_IMAGE}
 
 RUN apt-get update -y && \
-    apt-get install -y libstdc++6 openssl libncurses5 locales ca-certificates \
+    apt-get install -y libstdc++6 openssl libncurses6 locales ca-certificates \
     && apt-get clean && rm -f /var/lib/apt/lists/*_*
 
 # Set the locale
