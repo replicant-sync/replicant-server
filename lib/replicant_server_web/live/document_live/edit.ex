@@ -3,6 +3,8 @@ defmodule ReplicantServerWeb.DocumentLive.Edit do
 
   alias ReplicantServer.Documents
 
+  @default_content Jason.encode!(%{"title" => "Untitled"}, pretty: true)
+
   @impl true
   def mount(_params, _session, socket) do
     {:ok, assign(socket, json_error: nil, conflict_warning: nil)}
@@ -18,7 +20,7 @@ defmodule ReplicantServerWeb.DocumentLive.Edit do
     |> assign(:page_title, "New Document")
     |> assign(:document, nil)
     |> assign(:is_public, false)
-    |> assign(:content_text, "{\n  \n}")
+    |> assign(:content_json, @default_content)
   end
 
   defp apply_action(socket, :new_public, _params) do
@@ -26,7 +28,7 @@ defmodule ReplicantServerWeb.DocumentLive.Edit do
     |> assign(:page_title, "New Public Document")
     |> assign(:document, nil)
     |> assign(:is_public, true)
-    |> assign(:content_text, "{\n  \n}")
+    |> assign(:content_json, @default_content)
   end
 
   defp apply_action(socket, :edit, %{"id" => id}) do
@@ -54,7 +56,7 @@ defmodule ReplicantServerWeb.DocumentLive.Edit do
     |> assign(:page_title, "Edit Document")
     |> assign(:document, document)
     |> assign(:is_public, is_public)
-    |> assign(:content_text, Jason.encode!(document.content, pretty: true))
+    |> assign(:content_json, Jason.encode!(document.content))
   end
 
   @impl true
@@ -119,6 +121,7 @@ defmodule ReplicantServerWeb.DocumentLive.Edit do
         {:noreply,
          socket
          |> assign(:document, updated)
+         |> assign(:content_json, Jason.encode!(updated.content))
          |> assign(:json_error, nil)
          |> assign(:conflict_warning, nil)
          |> put_flash(:info, "Document saved")}
@@ -137,7 +140,8 @@ defmodule ReplicantServerWeb.DocumentLive.Edit do
       {:noreply,
        socket
        |> assign(:document, doc)
-       |> assign(:conflict_warning, "This document was modified by another client. Your textarea may be stale.")}
+       |> assign(:conflict_warning, "This document was modified by another client.")
+       |> push_event("update-content", %{content: Jason.encode!(doc.content)})}
     else
       {:noreply, socket}
     end
