@@ -27,13 +27,13 @@
           <div class="flex items-center space-x-4">
             <%= if assigns[:current_user] do %>
               <span class="text-indigo-200 text-sm"><%= @current_user.email %></span>
-              <a
+              <.link
                 href={~p"/logout"}
                 method="delete"
                 class="text-indigo-200 hover:text-white text-sm"
               >
                 Log out
-              </a>
+              </.link>
             <% end %>
           </div>
         </div>
