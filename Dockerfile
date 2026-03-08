@@ -23,13 +23,21 @@ RUN mix local.hex --force && \
 # Install mix dependencies
 COPY mix.exs mix.lock ./
 RUN mix deps.get --only $MIX_ENV
+RUN mkdir config
 
-# Copy all source and config, then compile in one step
-COPY config config
+# Compile deps separately first
+COPY config/config.exs config/${MIX_ENV}.exs config/
+RUN mix deps.compile
+
+# Copy application code and compile
 COPY priv priv
 COPY lib lib
+RUN mix compile
+
+# Copy runtime config and build release
+COPY config/runtime.exs config/
 COPY rel rel
-RUN mix compile && mix release
+RUN mix release
 
 # Start a new build stage for the minimal runtime image
 FROM ${RUNNER_IMAGE}
