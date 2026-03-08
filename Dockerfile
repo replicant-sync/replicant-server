@@ -64,5 +64,5 @@ RUN chmod +x /app/bin/*
 
 USER nobody
 
-# Start the Phoenix server
-CMD ["/app/bin/server"]
+# Run migrations then start the Phoenix server
+CMD /app/bin/migrate && /app/bin/server
