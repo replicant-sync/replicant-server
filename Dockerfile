@@ -7,7 +7,7 @@ ARG RUNNER_IMAGE="alpine:3.21.6"
 FROM ${BUILDER_IMAGE} AS builder
 
 # Install build dependencies
-RUN apk add --no-cache build-base git
+RUN apk add --no-cache build-base git nodejs npm
 
 # Prepare build dir
 WORKDIR /app
@@ -28,9 +28,18 @@ RUN mkdir config
 COPY config/config.exs config/${MIX_ENV}.exs config/
 RUN mix deps.compile
 
-# Copy application code and compile
+# Copy application code and assets
 COPY priv priv
 COPY lib lib
+COPY assets assets
+
+# Install npm dependencies (for vanilla-jsoneditor)
+RUN cd assets && npm install --production
+
+# Build assets (esbuild + tailwind)
+RUN mix assets.deploy
+
+# Compile the release
 RUN mix compile
 
 # Copy runtime config and build release
