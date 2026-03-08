@@ -1,7 +1,7 @@
 # Dockerfile for Phoenix release
 # Based on https://hexdocs.pm/phoenix/releases.html
 
-ARG BUILDER_IMAGE="hexpm/elixir:1.19.4-erlang-27.2.1-debian-trixie-20260223-slim"
+ARG BUILDER_IMAGE="hexpm/elixir:1.18.4-erlang-27.2.1-debian-trixie-20260223-slim"
 ARG RUNNER_IMAGE="debian:trixie-20260223-slim"
 
 FROM ${BUILDER_IMAGE} AS builder
