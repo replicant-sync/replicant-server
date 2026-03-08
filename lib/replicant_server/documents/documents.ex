@@ -240,6 +240,111 @@ defmodule ReplicantServer.Documents do
 
   defp compute_size(_), do: 0
 
+  # --- Public documents (user_id IS NULL) ---
+
+  @doc """
+  Lists all non-deleted public documents (user_id is nil).
+  """
+  def list_public_documents do
+    Repo.all(
+      from d in Document,
+        where: is_nil(d.user_id) and is_nil(d.deleted_at),
+        order_by: [desc: d.updated_at]
+    )
+  end
+
+  @doc """
+  Gets a single public document by ID.
+  """
+  def get_public_document(id) do
+    Repo.one(
+      from d in Document,
+        where: d.id == ^id and is_nil(d.user_id) and is_nil(d.deleted_at)
+    )
+  end
+
+  @doc """
+  Creates a public document (no user_id).
+  """
+  def create_public_document(attrs) do
+    document_id = attrs[:id] || attrs["id"] || Ecto.UUID.generate()
+    content = attrs[:content] || attrs["content"]
+
+    %Document{}
+    |> Document.create_changeset(%{
+      id: document_id,
+      user_id: nil,
+      content: content,
+      content_hash: compute_hash(content),
+      title: extract_title(content),
+      size_bytes: compute_size(content)
+    })
+    |> Repo.insert()
+    |> case do
+      {:ok, doc} ->
+        broadcast("documents:public", {:document_created, doc})
+        {:ok, doc}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
+  end
+
+  @doc """
+  Replaces a document's content entirely. Computes JSON Patch internally
+  so event history is preserved. Works for both user and public documents.
+  """
+  def replace_content(document, new_content) when is_map(new_content) do
+    patch = Jsonpatch.diff(document.content, new_content)
+
+    if patch == [] do
+      {:ok, document}
+    else
+      case apply_update(document, patch) do
+        {:ok, updated} ->
+          broadcast("documents:#{document.id}", {:document_updated, updated})
+
+          if document.user_id do
+            broadcast("documents:user:#{document.user_id}", {:document_updated, updated})
+          else
+            broadcast("documents:public", {:document_updated, updated})
+          end
+
+          {:ok, updated}
+
+        error ->
+          error
+      end
+    end
+  end
+
+  @doc """
+  Soft-deletes a public document.
+  """
+  def delete_public_document(document_id) do
+    case get_public_document(document_id) do
+      nil ->
+        {:error, :not_found}
+
+      document ->
+        document
+        |> Ecto.Changeset.change(deleted_at: DateTime.utc_now())
+        |> Repo.update()
+        |> case do
+          {:ok, doc} ->
+            broadcast("documents:public", {:document_deleted, doc})
+            {:ok, doc}
+
+          error ->
+            error
+        end
+    end
+  end
+
+  defp broadcast(topic, message) do
+    Phoenix.PubSub.broadcast(ReplicantServer.PubSub, topic, message)
+  end
+
   defp normalize_patch(patch) when is_list(patch) do
     Enum.map(patch, &normalize_operation/1)
   end

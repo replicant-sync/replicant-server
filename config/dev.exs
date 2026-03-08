@@ -24,7 +24,10 @@ config :replicant_server, ReplicantServerWeb.Endpoint,
   code_reloader: true,
   debug_errors: true,
   secret_key_base: "kRgzdWDPvEOdjziu65UQYFX/Gn9pn0Y/QBAmkL6rKDpRqsNCiXhdiSO76ILv7Zue",
-  watchers: []
+  watchers: [
+    esbuild: {Esbuild, :install_and_run, [:replicant_server, ~w(--sourcemap=inline --watch)]},
+    tailwind: {Tailwind, :install_and_run, [:replicant_server, ~w(--watch)]}
+  ]
 
 # ## SSL Support
 #
@@ -48,6 +51,15 @@ config :replicant_server, ReplicantServerWeb.Endpoint,
 # If desired, both `http:` and `https:` keys can be
 # configured to run both http and https servers on
 # different ports.
+
+# Watch static and templates for browser reloading.
+config :replicant_server, ReplicantServerWeb.Endpoint,
+  live_reload: [
+    patterns: [
+      ~r"priv/static/(?!uploads/).*(js|css|png|jpeg|jpg|gif|svg)$",
+      ~r"lib/replicant_server_web/(controllers|live|components)/.*(ex|heex)$"
+    ]
+  ]
 
 # Enable dev routes for dashboard and mailbox
 config :replicant_server, dev_routes: true

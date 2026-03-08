@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content={get_csrf_token()} />
+    <title>Replicant Server</title>
+    <link phx-track-static rel="stylesheet" href={~p"/assets/app.css"} />
+    <script defer phx-track-static type="text/javascript" src={~p"/assets/app.js"}>
+    </script>
+  </head>
+  <body class="h-full">
+    <nav class="bg-indigo-600">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="flex h-14 items-center justify-between">
+          <div class="flex items-center space-x-6">
+            <a href={~p"/"} class="text-white font-semibold text-lg">Replicant</a>
+            <%= if assigns[:current_user] do %>
+              <a href={~p"/documents"} class="text-indigo-200 hover:text-white text-sm">
+                My Documents
+              </a>
+              <a href={~p"/public"} class="text-indigo-200 hover:text-white text-sm">
+                Public Documents
+              </a>
+            <% end %>
+          </div>
+          <div class="flex items-center space-x-4">
+            <%= if assigns[:current_user] do %>
+              <span class="text-indigo-200 text-sm"><%= @current_user.email %></span>
+              <a
+                href={~p"/logout"}
+                method="delete"
+                class="text-indigo-200 hover:text-white text-sm"
+              >
+                Log out
+              </a>
+            <% end %>
+          </div>
+        </div>
+      </div>
+    </nav>
+    <%= @inner_content %>
+  </body>
+</html>

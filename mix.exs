@@ -54,7 +54,20 @@ defmodule ReplicantServer.MixProject do
       
       # Sync server dependencies
       {:uuid, "~> 1.1"},      # Deterministic UUID v5
-      {:jsonpatch, "~> 2.3"}  # JSON Patch RFC 6902
+      {:jsonpatch, "~> 2.3"}, # JSON Patch RFC 6902
+
+      # LiveView + asset tooling
+      {:phoenix_live_view, "~> 1.0"},
+      {:phoenix_html, "~> 4.2"},
+      {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
+      {:tailwind, "~> 0.2", runtime: Mix.env() == :dev},
+      {:heroicons,
+       github: "tailwindlabs/heroicons",
+       tag: "v2.1.1",
+       sparse: "optimized",
+       app: false,
+       compile: false,
+       depth: 1}
     ]
   end
 

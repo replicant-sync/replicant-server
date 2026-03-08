@@ -1,0 +1,31 @@
+<.header>
+  My Documents
+  <:actions>
+    <.link navigate={~p"/documents/new"}>
+      <.button>New Document</.button>
+    </.link>
+  </:actions>
+</.header>
+
+<.table :if={@documents != []} id="documents" rows={@documents} row_id={&"doc-#{&1.id}"}>
+  <:col :let={doc} label="Title"><%= doc.title || "(untitled)" %></:col>
+  <:col :let={doc} label="Size"><%= doc.size_bytes || 0 %> bytes</:col>
+  <:col :let={doc} label="Revision"><%= doc.sync_revision %></:col>
+  <:col :let={doc} label="Updated"><%= Calendar.strftime(doc.updated_at, "%Y-%m-%d %H:%M") %></:col>
+  <:action :let={doc}>
+    <.link navigate={~p"/documents/#{doc.id}"}>View</.link>
+  </:action>
+  <:action :let={doc}>
+    <.link navigate={~p"/documents/#{doc.id}/edit"}>Edit</.link>
+  </:action>
+  <:action :let={doc}>
+    <.link phx-click="delete" phx-value-id={doc.id} data-confirm="Are you sure?">
+      Delete
+    </.link>
+  </:action>
+</.table>
+
+<p :if={@documents == []} class="mt-8 text-sm text-zinc-500">
+  No documents yet.
+  <.link navigate={~p"/documents/new"} class="text-indigo-600 hover:text-indigo-500">Create one</.link>
+</p>
