@@ -51,6 +51,7 @@ ENV MIX_ENV="prod"
 
 # Copy the release from the builder stage
 COPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/replicant_server ./
+RUN chmod +x /app/bin/*
 
 USER nobody
 
