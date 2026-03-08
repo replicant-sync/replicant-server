@@ -3,11 +3,23 @@ defmodule ReplicantServerWeb.Router do
 
   pipeline :browser do
     plug :accepts, ["html"]
+    plug :maybe_basic_auth
     plug :fetch_session
     plug :fetch_live_flash
     plug :put_root_layout, html: {ReplicantServerWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+  end
+
+  defp maybe_basic_auth(conn, _opts) do
+    username = Application.get_env(:replicant_server, :basic_auth_username)
+    password = Application.get_env(:replicant_server, :basic_auth_password)
+
+    if username && password do
+      Plug.BasicAuth.basic_auth(conn, username: username, password: password)
+    else
+      conn
+    end
   end
 
   pipeline :api do

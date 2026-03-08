@@ -23,6 +23,13 @@ end
 config :replicant_server, ReplicantServerWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# Basic auth for the web UI (optional, set both to enable)
+if basic_user = System.get_env("BASIC_AUTH_USERNAME") do
+  config :replicant_server,
+    basic_auth_username: basic_user,
+    basic_auth_password: System.get_env("BASIC_AUTH_PASSWORD")
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
