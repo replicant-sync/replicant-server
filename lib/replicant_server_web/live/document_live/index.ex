@@ -62,20 +62,9 @@ defmodule ReplicantServerWeb.DocumentLive.Index do
     {:noreply, push_patch(socket, to: ~p"/documents?#{params}")}
   end
 
-  def handle_event("update-filter", params, socket) do
-    index = String.to_integer(params["index"])
-    filters = socket.assigns.filters
-
-    filter = Enum.at(filters, index, %{key: "", value: ""})
-
-    updated_filter =
-      cond do
-        params["fk"] -> %{filter | key: params["fk"]}
-        params["fv"] -> %{filter | value: params["fv"]}
-        true -> filter
-      end
-
-    filters = List.replace_at(filters, index, updated_filter)
+  def handle_event("update-filter", %{"index" => index, "fk" => key, "fv" => value}, socket) do
+    index = String.to_integer(index)
+    filters = List.replace_at(socket.assigns.filters, index, %{key: key, value: value})
     params = build_params(socket.assigns, filters: filters)
     {:noreply, push_patch(socket, to: ~p"/documents?#{params}")}
   end

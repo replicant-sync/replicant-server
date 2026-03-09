@@ -19,14 +19,13 @@
     />
   </form>
 
-  <div :for={{filter, i} <- Enum.with_index(@filters)} class="flex gap-2 items-center">
+  <form :for={{filter, i} <- Enum.with_index(@filters)} phx-change="update-filter" class="flex gap-2 items-center">
+    <input type="hidden" name="index" value={i} />
     <input
       type="text"
       name="fk"
       value={filter.key}
       placeholder="Key (e.g. author)"
-      phx-change="update-filter"
-      phx-value-index={i}
       phx-debounce="300"
       class="w-40 rounded-lg border-zinc-300 text-sm focus:border-zinc-400 focus:ring-0"
     />
@@ -36,15 +35,13 @@
       name="fv"
       value={filter.value}
       placeholder="Value"
-      phx-change="update-filter"
-      phx-value-index={i}
       phx-debounce="300"
       class="w-40 rounded-lg border-zinc-300 text-sm focus:border-zinc-400 focus:ring-0"
     />
-    <button phx-click="remove-filter" phx-value-index={i} class="text-red-500 hover:text-red-700 text-lg leading-none">
+    <button type="button" phx-click="remove-filter" phx-value-index={i} class="text-red-500 hover:text-red-700 text-lg leading-none">
       &times;
     </button>
-  </div>
+  </form>
 
   <button phx-click="add-filter" class="text-sm text-indigo-600 hover:text-indigo-500">
     + Add property filter
