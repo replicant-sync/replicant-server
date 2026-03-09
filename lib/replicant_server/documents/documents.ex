@@ -25,15 +25,22 @@ defmodule ReplicantServer.Documents do
     )
   end
 
+  @allowed_sort_fields ~w(title size_bytes sync_revision updated_at created_at)a
+
   @doc """
-  Lists all non-deleted documents for a user.
+  Lists all non-deleted documents for a user with optional sorting, search, and filters.
   """
-  def list_user_documents(user_id) do
-    Repo.all(
-      from d in Document,
-        where: d.user_id == ^user_id and is_nil(d.deleted_at),
-        order_by: [desc: d.updated_at]
-    )
+  def list_user_documents(user_id, opts \\ []) do
+    sort_by = validate_field(opts[:sort_by], :updated_at)
+    sort_order = validate_order(opts[:sort_order], :desc)
+    search = opts[:search]
+    filters = opts[:filters] || []
+
+    from(d in Document, where: d.user_id == ^user_id and is_nil(d.deleted_at))
+    |> maybe_search(search)
+    |> apply_json_filters(filters)
+    |> order_by([d], [{^sort_order, ^sort_by}])
+    |> Repo.all()
   end
 
   @doc """
@@ -243,14 +250,19 @@ defmodule ReplicantServer.Documents do
   # --- Public documents (user_id IS NULL) ---
 
   @doc """
-  Lists all non-deleted public documents (user_id is nil).
+  Lists all non-deleted public documents (user_id is nil) with optional sorting, search, and filters.
   """
-  def list_public_documents do
-    Repo.all(
-      from d in Document,
-        where: is_nil(d.user_id) and is_nil(d.deleted_at),
-        order_by: [desc: d.updated_at]
-    )
+  def list_public_documents(opts \\ []) do
+    sort_by = validate_field(opts[:sort_by], :updated_at)
+    sort_order = validate_order(opts[:sort_order], :desc)
+    search = opts[:search]
+    filters = opts[:filters] || []
+
+    from(d in Document, where: is_nil(d.user_id) and is_nil(d.deleted_at))
+    |> maybe_search(search)
+    |> apply_json_filters(filters)
+    |> order_by([d], [{^sort_order, ^sort_by}])
+    |> Repo.all()
   end
 
   @doc """
@@ -339,6 +351,53 @@ defmodule ReplicantServer.Documents do
             error
         end
     end
+  end
+
+  defp validate_field(nil, default), do: default
+  defp validate_field(field, default) when is_binary(field) do
+    case String.to_existing_atom(field) do
+      f when f in @allowed_sort_fields -> f
+      _ -> default
+    end
+  rescue
+    ArgumentError -> default
+  end
+  defp validate_field(field, default) when is_atom(field) do
+    if field in @allowed_sort_fields, do: field, else: default
+  end
+
+  defp validate_order(:asc, _default), do: :asc
+  defp validate_order("asc", _default), do: :asc
+  defp validate_order(:desc, _default), do: :desc
+  defp validate_order("desc", _default), do: :desc
+  defp validate_order(_, default), do: default
+
+  defp maybe_search(query, nil), do: query
+  defp maybe_search(query, ""), do: query
+  defp maybe_search(query, term) do
+    sanitized = "%#{sanitize_like(term)}%"
+    from d in query,
+      where: ilike(d.title, ^sanitized) or ilike(type(d.content, :string), ^sanitized)
+  end
+
+  defp apply_json_filters(query, []), do: query
+  defp apply_json_filters(query, filters) do
+    Enum.reduce(filters, query, fn {key, value}, q ->
+      if key != "" and value != "" do
+        sanitized = "%#{sanitize_like(value)}%"
+        from d in q,
+          where: ilike(fragment("?->>?", d.content, ^key), ^sanitized)
+      else
+        q
+      end
+    end)
+  end
+
+  defp sanitize_like(term) do
+    term
+    |> String.replace("\\", "\\\\")
+    |> String.replace("%", "\\%")
+    |> String.replace("_", "\\_")
   end
 
   defp broadcast(topic, message) do

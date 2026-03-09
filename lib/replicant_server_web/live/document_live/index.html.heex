@@ -7,11 +7,62 @@
   </:actions>
 </.header>
 
-<.table :if={@documents != []} id="documents" rows={@documents} row_id={&"doc-#{&1.id}"}>
-  <:col :let={doc} label="Title"><%= doc.title || "(untitled)" %></:col>
-  <:col :let={doc} label="Size"><%= doc.size_bytes || 0 %> bytes</:col>
-  <:col :let={doc} label="Revision"><%= doc.sync_revision %></:col>
-  <:col :let={doc} label="Updated"><%= Calendar.strftime(doc.updated_at, "%Y-%m-%d %H:%M") %></:col>
+<div class="mb-4 mt-8 space-y-2">
+  <form phx-change="search" phx-submit="search">
+    <input
+      type="text"
+      name="search"
+      value={@search}
+      placeholder="Search titles and content..."
+      phx-debounce="300"
+      class="w-full rounded-lg border-zinc-300 text-sm focus:border-zinc-400 focus:ring-0"
+    />
+  </form>
+
+  <div :for={{filter, i} <- Enum.with_index(@filters)} class="flex gap-2 items-center">
+    <input
+      type="text"
+      name="fk"
+      value={filter.key}
+      placeholder="Key (e.g. author)"
+      phx-change="update-filter"
+      phx-value-index={i}
+      phx-debounce="300"
+      class="w-40 rounded-lg border-zinc-300 text-sm focus:border-zinc-400 focus:ring-0"
+    />
+    <span class="text-zinc-500 text-sm">contains</span>
+    <input
+      type="text"
+      name="fv"
+      value={filter.value}
+      placeholder="Value"
+      phx-change="update-filter"
+      phx-value-index={i}
+      phx-debounce="300"
+      class="w-40 rounded-lg border-zinc-300 text-sm focus:border-zinc-400 focus:ring-0"
+    />
+    <button phx-click="remove-filter" phx-value-index={i} class="text-red-500 hover:text-red-700 text-lg leading-none">
+      &times;
+    </button>
+  </div>
+
+  <button phx-click="add-filter" class="text-sm text-indigo-600 hover:text-indigo-500">
+    + Add property filter
+  </button>
+</div>
+
+<.table
+  :if={@documents != []}
+  id="documents"
+  rows={@documents}
+  row_id={&"doc-#{&1.id}"}
+  sort_by={@sort_by}
+  sort_order={@sort_order}
+>
+  <:col :let={doc} label="Title" sort_field={:title}><%= doc.title || "(untitled)" %></:col>
+  <:col :let={doc} label="Size" sort_field={:size_bytes}><%= doc.size_bytes || 0 %> bytes</:col>
+  <:col :let={doc} label="Revision" sort_field={:sync_revision}><%= doc.sync_revision %></:col>
+  <:col :let={doc} label="Updated" sort_field={:updated_at}><%= Calendar.strftime(doc.updated_at, "%Y-%m-%d %H:%M") %></:col>
   <:action :let={doc}>
     <.link navigate={~p"/documents/#{doc.id}"}>View</.link>
   </:action>
@@ -26,6 +77,6 @@
 </.table>
 
 <p :if={@documents == []} class="mt-8 text-sm text-zinc-500">
-  No documents yet.
+  No documents found.
   <.link navigate={~p"/documents/new"} class="text-indigo-600 hover:text-indigo-500">Create one</.link>
 </p>

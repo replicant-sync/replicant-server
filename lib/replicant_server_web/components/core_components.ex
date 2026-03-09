@@ -353,6 +353,8 @@ defmodule ReplicantServerWeb.CoreComponents do
   attr :rows, :list, required: true
   attr :row_id, :any, default: nil, doc: "the function for generating the row id"
   attr :row_click, :any, default: nil, doc: "the function for handling phx-click on each row"
+  attr :sort_by, :atom, default: nil, doc: "the currently active sort field"
+  attr :sort_order, :atom, default: nil, doc: "the current sort direction (:asc or :desc)"
 
   attr :row_item, :any,
     default: &Function.identity/1,
@@ -360,6 +362,7 @@ defmodule ReplicantServerWeb.CoreComponents do
 
   slot :col, required: true do
     attr :label, :string
+    attr :sort_field, :atom
   end
 
   slot :action, doc: "the slot for showing user actions in the last table column"
@@ -375,7 +378,22 @@ defmodule ReplicantServerWeb.CoreComponents do
       <table class="w-[40rem] mt-11 sm:w-full">
         <thead class="text-sm text-left leading-6 text-zinc-500">
           <tr>
-            <th :for={col <- @col} class="p-0 pb-4 pr-6 font-normal"><%= col[:label] %></th>
+            <th :for={col <- @col} class="p-0 pb-4 pr-6 font-normal">
+              <%= if col[:sort_field] do %>
+                <span
+                  phx-click="sort"
+                  phx-value-field={col[:sort_field]}
+                  class="cursor-pointer select-none hover:text-zinc-700"
+                >
+                  <%= col[:label] %>
+                  <%= if @sort_by == col[:sort_field] do %>
+                    <%= if @sort_order == :asc, do: " ▲", else: " ▼" %>
+                  <% end %>
+                </span>
+              <% else %>
+                <%= col[:label] %>
+              <% end %>
+            </th>
             <th :if={@action != []} class="relative p-0 pb-4">
               <span class="sr-only">Actions</span>
             </th>
