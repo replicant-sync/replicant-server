@@ -28,6 +28,69 @@ defmodule ReplicantServer.DocumentsTest do
       assert hd(events).event_type == "create"
     end
 
+    test "returns existing document when content is identical", %{user: user} do
+      content = %{"title" => "Duplicate", "body" => "Same content"}
+
+      {:ok, first} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: content})
+      {:ok, second} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: content})
+
+      assert first.id == second.id
+      assert Documents.list_user_documents(user.id) |> length() == 1
+    end
+
+    test "does not dedup when content differs", %{user: user} do
+      {:ok, doc1} =
+        Documents.create_document(user.id, %{
+          id: UUID.uuid4(),
+          content: %{"title" => "First"}
+        })
+
+      {:ok, doc2} =
+        Documents.create_document(user.id, %{
+          id: UUID.uuid4(),
+          content: %{"title" => "Second"}
+        })
+
+      assert doc1.id != doc2.id
+      assert Documents.list_user_documents(user.id) |> length() == 2
+    end
+
+    test "does not dedup across different users" do
+      {:ok, user_a} = Accounts.get_or_create_user("usera@example.com")
+      {:ok, user_b} = Accounts.get_or_create_user("userb@example.com")
+      content = %{"title" => "Shared content"}
+
+      {:ok, doc_a} = Documents.create_document(user_a.id, %{id: UUID.uuid4(), content: content})
+      {:ok, doc_b} = Documents.create_document(user_b.id, %{id: UUID.uuid4(), content: content})
+
+      assert doc_a.id != doc_b.id
+    end
+
+    test "allows recreating content after deletion", %{user: user} do
+      content = %{"title" => "Revived"}
+
+      {:ok, original} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: content})
+      {:ok, _} = Documents.delete_document(user.id, original.id)
+
+      {:ok, recreated} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: content})
+
+      assert recreated.id != original.id
+      assert Documents.list_user_documents(user.id) |> length() == 1
+    end
+
+    test "dedup returns existing even when new ID is provided", %{user: user} do
+      content = %{"title" => "Stable"}
+      original_id = UUID.uuid4()
+      new_id = UUID.uuid4()
+
+      {:ok, first} = Documents.create_document(user.id, %{id: original_id, content: content})
+      {:ok, second} = Documents.create_document(user.id, %{id: new_id, content: content})
+
+      # Should return the original, not create with the new ID
+      assert second.id == original_id
+      assert first.id == second.id
+    end
+
     test "returns conflict for duplicate ID", %{user: user} do
       doc_id = UUID.uuid4()
       content = %{"title" => "Test"}
@@ -105,6 +168,27 @@ defmodule ReplicantServer.DocumentsTest do
       events = Documents.get_changes_since(user.id, 0)
       delete_event = Enum.find(events, &(&1.event_type == "delete"))
       assert delete_event != nil
+    end
+  end
+
+  describe "public document dedup" do
+    test "returns existing public document when content is identical" do
+      content = %{"title" => "Public Preset", "data" => [1, 2, 3]}
+
+      {:ok, first} = Documents.create_public_document(%{content: content})
+      {:ok, second} = Documents.create_public_document(%{content: content})
+
+      assert first.id == second.id
+      assert Documents.list_public_documents() |> length() == 1
+    end
+
+    test "does not dedup public and user documents", %{user: user} do
+      content = %{"title" => "Cross-boundary"}
+
+      {:ok, public} = Documents.create_public_document(%{content: content})
+      {:ok, user_doc} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: content})
+
+      assert public.id != user_doc.id
     end
   end
 
