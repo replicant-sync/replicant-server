@@ -13,6 +13,25 @@ defmodule ReplicantServer.Release do
     end
   end
 
+  def create_credentials(name) do
+    load_app()
+
+    {:ok, _, _} =
+      Ecto.Migrator.with_repo(ReplicantServer.Repo, fn _repo ->
+        case ReplicantServer.Auth.create_credential(name) do
+          {:ok, credential} ->
+            IO.puts("Credentials created for: #{name}")
+            IO.puts("API Key:  #{credential.api_key}")
+            IO.puts("Secret:   #{credential.secret}")
+            IO.puts("")
+            IO.puts("Save the secret now — it cannot be retrieved later.")
+
+          {:error, changeset} ->
+            IO.puts("Error: #{inspect(changeset.errors)}")
+        end
+      end)
+  end
+
   def rollback(repo, version) do
     load_app()
     {:ok, _, _} = Ecto.Migrator.with_repo(repo, &Ecto.Migrator.run(&1, :down, to: version))

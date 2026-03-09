@@ -16,7 +16,7 @@ defmodule ReplicantServerWeb.Endpoint do
     longpoll: [connect_info: [session: @session_options]]
 
   socket "/socket", ReplicantServerWeb.UserSocket,
-    websocket: true,
+    websocket: [check_origin: false],
     longpoll: false
 
   # Serve at "/" the static files from "priv/static" directory.
