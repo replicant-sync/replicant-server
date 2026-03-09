@@ -51,46 +51,52 @@ defmodule ReplicantServer.Documents do
   def create_document(user_id, attrs) do
     document_id = attrs[:id] || attrs["id"]
     content = attrs[:content] || attrs["content"]
+    content_hash = compute_hash(content)
 
-    Multi.new()
-    |> Multi.insert(:document, fn _ ->
-      %Document{}
-      |> Document.create_changeset(%{
-        id: document_id,
-        user_id: user_id,
-        content: content,
-        content_hash: compute_hash(content),
-        title: extract_title(content),
-        size_bytes: compute_size(content)
-      })
-    end)
-    |> Multi.insert(:event, fn %{document: doc} ->
-      %ChangeEvent{}
-      |> ChangeEvent.changeset(%{
-        document_id: doc.id,
-        user_id: user_id,
-        event_type: "create",
-        forward_patch: content
-      })
-    end)
-    |> Repo.transaction()
-    |> case do
-      {:ok, %{document: document}} ->
-        {:ok, document}
+    case find_by_content_hash(user_id, content_hash) do
+      %Document{} = existing ->
+        {:ok, existing}
 
-      {:error, :document, %Ecto.Changeset{errors: errors}, _} ->
-        if Keyword.has_key?(errors, :id) do
-          # Conflict - document already exists
-          case get_document(document_id) do
-            nil -> {:error, :insert_failed}
-            existing -> {:error, :conflict, existing}
-          end
-        else
-          {:error, :insert_failed}
+      nil ->
+        Multi.new()
+        |> Multi.insert(:document, fn _ ->
+          %Document{}
+          |> Document.create_changeset(%{
+            id: document_id,
+            user_id: user_id,
+            content: content,
+            content_hash: content_hash,
+            title: extract_title(content),
+            size_bytes: compute_size(content)
+          })
+        end)
+        |> Multi.insert(:event, fn %{document: doc} ->
+          %ChangeEvent{}
+          |> ChangeEvent.changeset(%{
+            document_id: doc.id,
+            user_id: user_id,
+            event_type: "create",
+            forward_patch: content
+          })
+        end)
+        |> Repo.transaction()
+        |> case do
+          {:ok, %{document: document}} ->
+            {:ok, document}
+
+          {:error, :document, %Ecto.Changeset{errors: errors}, _} ->
+            if Keyword.has_key?(errors, :id) do
+              case get_document(document_id) do
+                nil -> {:error, :insert_failed}
+                existing -> {:error, :conflict, existing}
+              end
+            else
+              {:error, :insert_failed}
+            end
+
+          {:error, _, _, _} ->
+            {:error, :insert_failed}
         end
-
-      {:error, _, _, _} ->
-        {:error, :insert_failed}
     end
   end
 
@@ -281,24 +287,31 @@ defmodule ReplicantServer.Documents do
   def create_public_document(attrs) do
     document_id = attrs[:id] || attrs["id"] || Ecto.UUID.generate()
     content = attrs[:content] || attrs["content"]
+    content_hash = compute_hash(content)
 
-    %Document{}
-    |> Document.create_changeset(%{
-      id: document_id,
-      user_id: nil,
-      content: content,
-      content_hash: compute_hash(content),
-      title: extract_title(content),
-      size_bytes: compute_size(content)
-    })
-    |> Repo.insert()
-    |> case do
-      {:ok, doc} ->
-        broadcast("documents:public", {:document_created, doc})
-        {:ok, doc}
+    case find_public_by_content_hash(content_hash) do
+      %Document{} = existing ->
+        {:ok, existing}
 
-      {:error, changeset} ->
-        {:error, changeset}
+      nil ->
+        %Document{}
+        |> Document.create_changeset(%{
+          id: document_id,
+          user_id: nil,
+          content: content,
+          content_hash: content_hash,
+          title: extract_title(content),
+          size_bytes: compute_size(content)
+        })
+        |> Repo.insert()
+        |> case do
+          {:ok, doc} ->
+            broadcast("documents:public", {:document_created, doc})
+            {:ok, doc}
+
+          {:error, changeset} ->
+            {:error, changeset}
+        end
     end
   end
 
@@ -352,6 +365,26 @@ defmodule ReplicantServer.Documents do
         end
     end
   end
+
+  defp find_by_content_hash(user_id, content_hash) when is_binary(content_hash) do
+    Repo.one(
+      from d in Document,
+        where: d.user_id == ^user_id and d.content_hash == ^content_hash and is_nil(d.deleted_at),
+        limit: 1
+    )
+  end
+
+  defp find_by_content_hash(_user_id, _content_hash), do: nil
+
+  defp find_public_by_content_hash(content_hash) when is_binary(content_hash) do
+    Repo.one(
+      from d in Document,
+        where: is_nil(d.user_id) and d.content_hash == ^content_hash and is_nil(d.deleted_at),
+        limit: 1
+    )
+  end
+
+  defp find_public_by_content_hash(_content_hash), do: nil
 
   defp validate_field(nil, default), do: default
   defp validate_field(field, default) when is_binary(field) do
