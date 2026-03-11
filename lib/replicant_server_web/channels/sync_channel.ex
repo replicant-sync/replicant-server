@@ -143,13 +143,16 @@ defmodule ReplicantServerWeb.SyncChannel do
   def handle_in("request_full_sync", _payload, socket) do
     user_id = socket.assigns.user_id
 
-    documents = Documents.list_user_documents(user_id)
+    user_documents = Documents.list_user_documents(user_id)
+    public_documents = Documents.list_public_documents()
+    documents = user_documents ++ public_documents
     latest_sequence = Documents.get_latest_sequence(user_id)
 
     doc_list =
       Enum.map(documents, fn doc ->
         %{
           id: doc.id,
+          user_id: doc.user_id,
           content: doc.content,
           sync_revision: doc.sync_revision,
           content_hash: doc.content_hash,
