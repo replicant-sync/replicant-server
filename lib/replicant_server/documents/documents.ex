@@ -131,7 +131,7 @@ defmodule ReplicantServer.Documents do
 
     case Jsonpatch.apply_patch(normalized_patch, document.content) do
       {:ok, new_content} ->
-        reverse_patch = Jsonpatch.diff(new_content, document.content)
+        reverse_patch = json_diff(new_content, document.content)
 
         Multi.new()
         |> Multi.update(:document, fn _ ->
@@ -389,7 +389,7 @@ defmodule ReplicantServer.Documents do
   so event history is preserved. Works for both user and public documents.
   """
   def replace_content(document, new_content) when is_map(new_content) do
-    patch = Jsonpatch.diff(document.content, new_content)
+    patch = json_diff(document.content, new_content)
 
     if patch == [] do
       {:ok, document}
@@ -398,13 +398,11 @@ defmodule ReplicantServer.Documents do
         {:ok, updated} ->
           broadcast("documents:#{document.id}", {:document_updated, updated})
 
-          sync_patch = Jsonpatch.diff(document.content, updated.content)
-
           if document.user_id do
             broadcast("documents:user:#{document.user_id}", {:document_updated, updated})
             broadcast_to_sync_clients("sync:user:#{document.user_id}", "document_updated", %{
               id: updated.id,
-              patch: sync_patch,
+              patch: patch,
               sync_revision: updated.sync_revision,
               content_hash: updated.content_hash
             })
@@ -412,7 +410,7 @@ defmodule ReplicantServer.Documents do
             broadcast("documents:public", {:document_updated, updated})
             broadcast_to_sync_clients("sync:public", "document_updated", %{
               id: updated.id,
-              patch: sync_patch,
+              patch: patch,
               sync_revision: updated.sync_revision,
               content_hash: updated.content_hash
             })
@@ -540,4 +538,32 @@ defmodule ReplicantServer.Documents do
       {k, v} -> {String.to_existing_atom(k), v}
     end)
   end
+
+  # Compute a JSON Patch (RFC 6902) diff as plain maps.
+  # Jsonpatch.diff returns Operation structs that lack an "op" field and don't
+  # implement Jason.Encoder, so we convert immediately.
+  defp json_diff(source, target) do
+    Jsonpatch.diff(source, target)
+    |> Enum.map(&op_to_map/1)
+  end
+
+  defp op_to_map(%Jsonpatch.Operation.Add{path: path, value: value}),
+    do: %{op: "add", path: path, value: value}
+
+  defp op_to_map(%Jsonpatch.Operation.Remove{path: path}),
+    do: %{op: "remove", path: path}
+
+  defp op_to_map(%Jsonpatch.Operation.Replace{path: path, value: value}),
+    do: %{op: "replace", path: path, value: value}
+
+  defp op_to_map(%Jsonpatch.Operation.Move{path: path, from: from}),
+    do: %{op: "move", path: path, from: from}
+
+  defp op_to_map(%Jsonpatch.Operation.Copy{path: path, from: from}),
+    do: %{op: "copy", path: path, from: from}
+
+  defp op_to_map(%Jsonpatch.Operation.Test{path: path, value: value}),
+    do: %{op: "test", path: path, value: value}
+
+  defp op_to_map(op) when is_map(op), do: op
 end

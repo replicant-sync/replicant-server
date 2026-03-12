@@ -73,6 +73,37 @@ defmodule ReplicantServer.DocumentsBroadcastTest do
       assert is_list(payload.patch)
     end
 
+    test "broadcast patch is JSON-serializable with RFC 6902 op fields", %{user_id: user_id} do
+      {:ok, doc} =
+        Documents.create_document(user_id, %{
+          "id" => Ecto.UUID.generate(),
+          "content" => %{"title" => "Before", "count" => 1}
+        })
+
+      @endpoint.subscribe("sync:user:#{user_id}")
+
+      {:ok, _updated} = Documents.replace_content(doc, %{"title" => "After", "count" => 2})
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        event: "document_updated",
+        payload: payload
+      }
+
+      # Patch must be a list of plain maps (not Jsonpatch.Operation.* structs)
+      assert is_list(payload.patch)
+      assert length(payload.patch) > 0
+
+      for op <- payload.patch do
+        assert is_map(op), "patch operation must be a plain map"
+        assert Map.has_key?(op, :op), "patch operation must have :op key"
+        assert op.op in ["add", "remove", "replace", "move", "copy", "test"]
+        assert Map.has_key?(op, :path), "patch operation must have :path key"
+      end
+
+      # Must be JSON-encodable (would fail with Jsonpatch structs)
+      assert {:ok, _json} = Jason.encode(payload)
+    end
+
     test "does not broadcast when content is unchanged", %{user_id: user_id} do
       {:ok, doc} =
         Documents.create_document(user_id, %{
