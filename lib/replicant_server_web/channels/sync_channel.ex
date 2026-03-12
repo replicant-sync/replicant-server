@@ -46,12 +46,18 @@ defmodule ReplicantServerWeb.SyncChannel do
 
     case Documents.create_document(user_id, payload) do
       {:ok, document} ->
-        broadcast_except(socket, "document_created", %{
+        payload = %{
           id: document.id,
           content: document.content,
           sync_revision: document.sync_revision,
           content_hash: document.content_hash
-        })
+        }
+
+        broadcast_except(socket, "document_created", payload)
+
+        if is_nil(document.user_id) do
+          ReplicantServerWeb.Endpoint.broadcast("sync:public", "document_created", payload)
+        end
 
         {:reply, {:ok, %{id: document.id, sync_revision: document.sync_revision, content_hash: document.content_hash}},
          socket}
@@ -83,12 +89,18 @@ defmodule ReplicantServerWeb.SyncChannel do
 
     case Documents.update_document(user_id, document_id, patch, content_hash) do
       {:ok, document} ->
-        broadcast_except(socket, "document_updated", %{
+        update_payload = %{
           id: document.id,
           patch: patch,
           sync_revision: document.sync_revision,
           content_hash: document.content_hash
-        })
+        }
+
+        broadcast_except(socket, "document_updated", update_payload)
+
+        if is_nil(document.user_id) do
+          ReplicantServerWeb.Endpoint.broadcast("sync:public", "document_updated", update_payload)
+        end
 
         {:reply, {:ok, %{sync_revision: document.sync_revision}}, socket}
 
@@ -120,10 +132,14 @@ defmodule ReplicantServerWeb.SyncChannel do
     document_id = payload["id"]
 
     case Documents.delete_document(user_id, document_id) do
-      {:ok, _document} ->
-        broadcast_except(socket, "document_deleted", %{
-          id: document_id
-        })
+      {:ok, document} ->
+        delete_payload = %{id: document_id}
+
+        broadcast_except(socket, "document_deleted", delete_payload)
+
+        if is_nil(document.user_id) do
+          ReplicantServerWeb.Endpoint.broadcast("sync:public", "document_deleted", delete_payload)
+        end
 
         {:reply, :ok, socket}
 

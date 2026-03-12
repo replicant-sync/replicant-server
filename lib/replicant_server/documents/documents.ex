@@ -370,6 +370,12 @@ defmodule ReplicantServer.Documents do
         |> case do
           {:ok, doc} ->
             broadcast("documents:public", {:document_created, doc})
+            broadcast_to_sync_clients("sync:public", "document_created", %{
+              id: doc.id,
+              content: doc.content,
+              sync_revision: doc.sync_revision,
+              content_hash: doc.content_hash
+            })
             {:ok, doc}
 
           {:error, changeset} ->
@@ -392,10 +398,24 @@ defmodule ReplicantServer.Documents do
         {:ok, updated} ->
           broadcast("documents:#{document.id}", {:document_updated, updated})
 
+          sync_patch = Jsonpatch.diff(document.content, updated.content)
+
           if document.user_id do
             broadcast("documents:user:#{document.user_id}", {:document_updated, updated})
+            broadcast_to_sync_clients("sync:user:#{document.user_id}", "document_updated", %{
+              id: updated.id,
+              patch: sync_patch,
+              sync_revision: updated.sync_revision,
+              content_hash: updated.content_hash
+            })
           else
             broadcast("documents:public", {:document_updated, updated})
+            broadcast_to_sync_clients("sync:public", "document_updated", %{
+              id: updated.id,
+              patch: sync_patch,
+              sync_revision: updated.sync_revision,
+              content_hash: updated.content_hash
+            })
           end
 
           {:ok, updated}
@@ -421,6 +441,7 @@ defmodule ReplicantServer.Documents do
         |> case do
           {:ok, doc} ->
             broadcast("documents:public", {:document_deleted, doc})
+            broadcast_to_sync_clients("sync:public", "document_deleted", %{id: doc.id})
             {:ok, doc}
 
           error ->
@@ -498,6 +519,10 @@ defmodule ReplicantServer.Documents do
 
   defp broadcast(topic, message) do
     Phoenix.PubSub.broadcast(ReplicantServer.PubSub, topic, message)
+  end
+
+  defp broadcast_to_sync_clients(topic, event, payload) do
+    ReplicantServerWeb.Endpoint.broadcast(topic, event, payload)
   end
 
   defp normalize_patch(patch) when is_list(patch) do
