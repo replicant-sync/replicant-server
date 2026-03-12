@@ -192,6 +192,99 @@ defmodule ReplicantServer.DocumentsTest do
     end
   end
 
+  describe "copy_document_to_user" do
+    test "copies a single document to another user", %{user: user} do
+      {:ok, target} = Accounts.get_or_create_user("target@example.com")
+      content = %{"title" => "Copyable", "data" => "hello"}
+
+      {:ok, original} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: content})
+      {:ok, copied} = Documents.copy_document_to_user(original.id, user.id, target.id)
+
+      assert copied.content == original.content
+      assert copied.id != original.id
+      assert Documents.list_user_documents(target.id) |> length() == 1
+    end
+
+    test "returns error for nonexistent document", %{user: user} do
+      {:ok, target} = Accounts.get_or_create_user("target2@example.com")
+
+      assert {:error, :not_found} =
+               Documents.copy_document_to_user(UUID.uuid4(), user.id, target.id)
+    end
+
+    test "skips if identical content already exists for target", %{user: user} do
+      {:ok, target} = Accounts.get_or_create_user("target3@example.com")
+      content = %{"title" => "Already There"}
+
+      {:ok, original} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: content})
+      {:ok, _existing} = Documents.create_document(target.id, %{id: UUID.uuid4(), content: content})
+
+      {:ok, result} = Documents.copy_document_to_user(original.id, user.id, target.id)
+
+      # Should not create a duplicate
+      assert Documents.list_user_documents(target.id) |> length() == 1
+      assert result.content == content
+    end
+  end
+
+  describe "copy_all_documents" do
+    test "copies all documents between users", %{user: user} do
+      {:ok, target} = Accounts.get_or_create_user("bulk-target@example.com")
+
+      for i <- 1..3 do
+        Documents.create_document(user.id, %{
+          id: UUID.uuid4(),
+          content: %{"title" => "Doc #{i}"}
+        })
+      end
+
+      assert {:ok, %{copied: 3, skipped: 0}} =
+               Documents.copy_all_documents(user.id, target.id)
+
+      assert Documents.list_user_documents(target.id) |> length() == 3
+    end
+
+    test "skips already-existing documents", %{user: user} do
+      {:ok, target} = Accounts.get_or_create_user("bulk-target2@example.com")
+      shared_content = %{"title" => "Shared"}
+
+      Documents.create_document(user.id, %{id: UUID.uuid4(), content: shared_content})
+      Documents.create_document(user.id, %{id: UUID.uuid4(), content: %{"title" => "Unique"}})
+
+      # Pre-create the shared one in target
+      Documents.create_document(target.id, %{id: UUID.uuid4(), content: shared_content})
+
+      assert {:ok, %{copied: 1, skipped: 1}} =
+               Documents.copy_all_documents(user.id, target.id)
+
+      assert Documents.list_user_documents(target.id) |> length() == 2
+    end
+
+    test "handles empty source gracefully", %{user: user} do
+      {:ok, target} = Accounts.get_or_create_user("bulk-target3@example.com")
+
+      assert {:ok, %{copied: 0, skipped: 0}} =
+               Documents.copy_all_documents(user.id, target.id)
+    end
+  end
+
+  describe "copy_all_documents_by_email" do
+    test "resolves emails and copies documents" do
+      {:ok, source} = Accounts.get_or_create_user("email-source@example.com")
+
+      Documents.create_document(source.id, %{
+        id: UUID.uuid4(),
+        content: %{"title" => "Via Email"}
+      })
+
+      assert {:ok, %{copied: 1, skipped: 0}} =
+               Documents.copy_all_documents_by_email("email-source@example.com", "email-target@example.com")
+
+      {:ok, target} = Accounts.get_or_create_user("email-target@example.com")
+      assert Documents.list_user_documents(target.id) |> length() == 1
+    end
+  end
+
   describe "content hash" do
     test "computes consistent hash" do
       content = %{"a" => 1, "b" => 2}

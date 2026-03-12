@@ -253,6 +253,69 @@ defmodule ReplicantServer.Documents do
 
   defp compute_size(_), do: 0
 
+  # --- Document copying / sharing ---
+
+  @doc """
+  Copies a single document to another user.
+
+  Creates a new document under `target_user_id` with the same content.
+  Skips if an identical document (by content hash) already exists for the target user.
+
+  Returns `{:ok, document}` or `{:error, reason}`.
+  """
+  def copy_document_to_user(document_id, source_user_id, target_user_id) do
+    case get_user_document(source_user_id, document_id) do
+      nil -> {:error, :not_found}
+      doc -> create_document(target_user_id, %{id: Ecto.UUID.generate(), content: doc.content})
+    end
+  end
+
+  @doc """
+  Copies all documents from one user to another.
+
+  Skips documents that already exist for the target user (by content hash).
+  Returns `{:ok, %{copied: count, skipped: count}}`.
+  """
+  def copy_all_documents(source_user_id, target_user_id) do
+    docs = list_user_documents(source_user_id)
+
+    results =
+      Enum.map(docs, fn doc ->
+        new_id = Ecto.UUID.generate()
+        {new_id, create_document(target_user_id, %{id: new_id, content: doc.content})}
+      end)
+
+    copied = Enum.count(results, fn
+      {new_id, {:ok, doc}} -> doc.id == new_id
+      _ -> false
+    end)
+
+    skipped = length(docs) - copied
+
+    {:ok, %{copied: copied, skipped: skipped}}
+  end
+
+  @doc """
+  Copies all documents from one user email to another.
+
+  Convenience wrapper that resolves emails to user IDs.
+  Returns `{:ok, %{copied: count, skipped: count}}` or `{:error, reason}`.
+
+  ## Example
+
+      iex> Documents.copy_all_documents_by_email("source@example.com", "target@example.com")
+      {:ok, %{copied: 42, skipped: 0}}
+  """
+  def copy_all_documents_by_email(source_email, target_email) do
+    source_id = ReplicantServer.Auth.deterministic_user_id(source_email)
+    target_id = ReplicantServer.Auth.deterministic_user_id(target_email)
+
+    # Ensure target user exists
+    ReplicantServer.Accounts.get_or_create_user(target_email)
+
+    copy_all_documents(source_id, target_id)
+  end
+
   # --- Public documents (user_id IS NULL) ---
 
   @doc """
