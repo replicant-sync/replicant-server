@@ -6,27 +6,43 @@ defmodule ReplicantServerWeb.SyncChannelTest do
   setup do
     {:ok, credential} = Auth.create_credential("Test App")
     email = "test@example.com"
+    user_id = Auth.deterministic_user_id(email)
     timestamp = System.system_time(:second)
     signature = Auth.create_signature(credential.secret, timestamp, email, credential.api_key)
 
     %{
       credential: credential,
       email: email,
+      user_id: user_id,
       timestamp: timestamp,
       signature: signature
     }
+  end
+
+  defp join_user_channel(context) do
+    {:ok, _reply, socket} =
+      socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
+      |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:user:#{context.user_id}", %{
+        "email" => context.email,
+        "api_key" => context.credential.api_key,
+        "signature" => context.signature,
+        "timestamp" => context.timestamp
+      })
+
+    socket
   end
 
   describe "join" do
     test "authenticates and joins with valid credentials", %{
       credential: cred,
       email: email,
+      user_id: user_id,
       timestamp: timestamp,
       signature: signature
     } do
       {:ok, reply, socket} =
         socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
-        |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:main", %{
+        |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:user:#{user_id}", %{
           "email" => email,
           "api_key" => cred.api_key,
           "signature" => signature,
@@ -38,10 +54,10 @@ defmodule ReplicantServerWeb.SyncChannelTest do
       assert socket.assigns.email == email
     end
 
-    test "rejects invalid signature", %{credential: cred, email: email, timestamp: timestamp} do
+    test "rejects invalid signature", %{credential: cred, email: email, user_id: user_id, timestamp: timestamp} do
       assert {:error, %{reason: "invalid_signature"}} =
                socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
-               |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:main", %{
+               |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:user:#{user_id}", %{
                  "email" => email,
                  "api_key" => cred.api_key,
                  "signature" => "invalid_signature",
@@ -52,22 +68,13 @@ defmodule ReplicantServerWeb.SyncChannelTest do
     test "rejects missing params" do
       assert {:error, %{reason: "missing_params"}} =
                socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
-               |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:main", %{})
+               |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:public", %{})
     end
   end
 
   describe "create_document" do
     setup context do
-      {:ok, _reply, socket} =
-        socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
-        |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:main", %{
-          "email" => context.email,
-          "api_key" => context.credential.api_key,
-          "signature" => context.signature,
-          "timestamp" => context.timestamp
-        })
-
-      %{socket: socket}
+      %{socket: join_user_channel(context)}
     end
 
     test "creates document and broadcasts", %{socket: socket} do
@@ -106,14 +113,7 @@ defmodule ReplicantServerWeb.SyncChannelTest do
 
   describe "update_document" do
     setup context do
-      {:ok, _reply, socket} =
-        socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
-        |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:main", %{
-          "email" => context.email,
-          "api_key" => context.credential.api_key,
-          "signature" => context.signature,
-          "timestamp" => context.timestamp
-        })
+      socket = join_user_channel(context)
 
       doc_id = UUID.uuid4()
 
@@ -154,14 +154,7 @@ defmodule ReplicantServerWeb.SyncChannelTest do
 
   describe "full_sync" do
     setup context do
-      {:ok, _reply, socket} =
-        socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
-        |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:main", %{
-          "email" => context.email,
-          "api_key" => context.credential.api_key,
-          "signature" => context.signature,
-          "timestamp" => context.timestamp
-        })
+      socket = join_user_channel(context)
 
       # Create some documents
       refs =
@@ -189,14 +182,7 @@ defmodule ReplicantServerWeb.SyncChannelTest do
 
   describe "get_changes_since" do
     setup context do
-      {:ok, _reply, socket} =
-        socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
-        |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:main", %{
-          "email" => context.email,
-          "api_key" => context.credential.api_key,
-          "signature" => context.signature,
-          "timestamp" => context.timestamp
-        })
+      socket = join_user_channel(context)
 
       doc_id = UUID.uuid4()
 
