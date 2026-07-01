@@ -327,7 +327,7 @@ defmodule ReplicantServer.Documents do
     search = opts[:search]
     filters = opts[:filters] || []
 
-    from(d in Document, where: is_nil(d.user_id) and is_nil(d.deleted_at))
+    from(d in Document, where: d.visibility == "public" and is_nil(d.deleted_at))
     |> maybe_search(search)
     |> apply_json_filters(filters)
     |> order_by([d], [{^sort_order, ^sort_by}])
@@ -340,7 +340,7 @@ defmodule ReplicantServer.Documents do
   def get_public_document(id) do
     Repo.one(
       from d in Document,
-        where: d.id == ^id and is_nil(d.user_id) and is_nil(d.deleted_at)
+        where: d.id == ^id and d.visibility == "public" and is_nil(d.deleted_at)
     )
   end
 
@@ -364,6 +364,7 @@ defmodule ReplicantServer.Documents do
           content: content,
           content_hash: content_hash,
           title: extract_title(content),
+          visibility: "public",
           size_bytes: compute_size(content)
         })
         |> Repo.insert()
@@ -461,7 +462,7 @@ defmodule ReplicantServer.Documents do
   defp find_public_by_content_hash(content_hash) when is_binary(content_hash) do
     Repo.one(
       from d in Document,
-        where: is_nil(d.user_id) and d.content_hash == ^content_hash and is_nil(d.deleted_at),
+        where: d.visibility == "public" and d.content_hash == ^content_hash and is_nil(d.deleted_at),
         limit: 1
     )
   end
