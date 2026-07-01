@@ -67,6 +67,8 @@ defmodule ReplicantServer.Documents do
             content: content,
             content_hash: content_hash,
             title: extract_title(content),
+            author_name: attrs[:author_name] || attrs["author_name"],
+            provenance: attrs[:provenance] || attrs["provenance"] || %{},
             size_bytes: compute_size(content)
           })
         end)
@@ -266,8 +268,23 @@ defmodule ReplicantServer.Documents do
   def copy_document_to_user(document_id, source_user_id, target_user_id) do
     case get_user_document(source_user_id, document_id) do
       nil -> {:error, :not_found}
-      doc -> create_document(target_user_id, %{id: Ecto.UUID.generate(), content: doc.content})
+      doc -> create_document(target_user_id, copy_attrs(doc, target_user_id))
     end
+  end
+
+  defp copy_attrs(source_doc, target_user_id) do
+    target = ReplicantServer.Accounts.get_user(target_user_id)
+
+    %{
+      id: Ecto.UUID.generate(),
+      content: source_doc.content,
+      author_name: target && target.display_name,
+      provenance: %{
+        "copied_from" => source_doc.id,
+        "source_author_id" => source_doc.user_id,
+        "source_author_name" => source_doc.author_name
+      }
+    }
   end
 
   @doc """
@@ -281,8 +298,8 @@ defmodule ReplicantServer.Documents do
 
     results =
       Enum.map(docs, fn doc ->
-        new_id = Ecto.UUID.generate()
-        {new_id, create_document(target_user_id, %{id: new_id, content: doc.content})}
+        attrs = copy_attrs(doc, target_user_id)
+        {attrs.id, create_document(target_user_id, attrs)}
       end)
 
     copied = Enum.count(results, fn
