@@ -520,7 +520,11 @@ defmodule ReplicantServer.Documents do
   end
 
   defp broadcast_to_sync_clients(topic, event, payload) do
-    ReplicantServerWeb.Endpoint.broadcast(topic, event, payload)
+    Phoenix.PubSub.broadcast(
+      ReplicantServer.PubSub,
+      topic,
+      %Phoenix.Socket.Broadcast{topic: topic, event: event, payload: payload}
+    )
   end
 
   defp normalize_patch(patch) when is_list(patch) do

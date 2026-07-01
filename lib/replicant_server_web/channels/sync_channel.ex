@@ -56,7 +56,7 @@ defmodule ReplicantServerWeb.SyncChannel do
         broadcast_except(socket, "document_created", payload)
 
         if is_nil(document.user_id) do
-          ReplicantServerWeb.Endpoint.broadcast("sync:public", "document_created", payload)
+          socket.endpoint.broadcast("sync:public", "document_created", payload)
         end
 
         {:reply, {:ok, %{id: document.id, sync_revision: document.sync_revision, content_hash: document.content_hash}},
@@ -99,7 +99,7 @@ defmodule ReplicantServerWeb.SyncChannel do
         broadcast_except(socket, "document_updated", update_payload)
 
         if is_nil(document.user_id) do
-          ReplicantServerWeb.Endpoint.broadcast("sync:public", "document_updated", update_payload)
+          socket.endpoint.broadcast("sync:public", "document_updated", update_payload)
         end
 
         {:reply, {:ok, %{sync_revision: document.sync_revision}}, socket}
@@ -138,7 +138,7 @@ defmodule ReplicantServerWeb.SyncChannel do
         broadcast_except(socket, "document_deleted", delete_payload)
 
         if is_nil(document.user_id) do
-          ReplicantServerWeb.Endpoint.broadcast("sync:public", "document_deleted", delete_payload)
+          socket.endpoint.broadcast("sync:public", "document_deleted", delete_payload)
         end
 
         {:reply, :ok, socket}
