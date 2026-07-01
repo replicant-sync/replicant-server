@@ -25,6 +25,30 @@ defmodule ReplicantServer.Accounts do
   end
 
   @doc """
+  Mints (or fetches) the deterministic user for `email` and sets `display_name`.
+
+  Idempotent: same email always resolves to the same frozen UUIDv5; the
+  display name is updated in place on repeat calls. Used to mint factory
+  contributors ahead of the backfill.
+  """
+  def upsert_user(email, display_name) do
+    normalized = Auth.normalize_email(email)
+    user_id = Auth.deterministic_user_id(normalized)
+
+    case get_user(user_id) do
+      nil ->
+        %User{}
+        |> User.changeset(%{id: user_id, email: normalized, display_name: display_name})
+        |> Repo.insert()
+
+      %User{} = user ->
+        user
+        |> User.changeset(%{display_name: display_name})
+        |> Repo.update()
+    end
+  end
+
+  @doc """
   Gets a user by ID.
   """
   def get_user(id) do
