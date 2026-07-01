@@ -25,6 +25,9 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 replicant_server-*.tar
 
+# Node.js dependencies (installed at build time)
+/assets/node_modules/
+
 # Kamal secrets and config (contains passwords/server details)
 .kamal/secrets
 config/deploy.yml

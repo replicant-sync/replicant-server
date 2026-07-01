@@ -1,0 +1,27 @@
+<.header>
+  <%= @document.title || "(untitled)" %>
+  <:subtitle>
+    Revision <%= @document.sync_revision %> &middot; <%= @document.size_bytes || 0 %> bytes
+  </:subtitle>
+  <:actions>
+    <.link navigate={if @is_public, do: ~p"/public/#{@document.id}/edit", else: ~p"/documents/#{@document.id}/edit"}>
+      <.button>Edit</.button>
+    </.link>
+  </:actions>
+</.header>
+
+<.list>
+  <:item title="ID"><code class="text-xs"><%= @document.id %></code></:item>
+  <:item title="Content Hash"><code class="text-xs"><%= @document.content_hash %></code></:item>
+  <:item title="Created"><%= Calendar.strftime(@document.created_at, "%Y-%m-%d %H:%M:%S UTC") %></:item>
+  <:item title="Updated"><%= Calendar.strftime(@document.updated_at, "%Y-%m-%d %H:%M:%S UTC") %></:item>
+</.list>
+
+<div class="mt-8">
+  <h2 class="text-sm font-semibold text-zinc-800 mb-2">Content</h2>
+  <pre class="bg-zinc-900 text-zinc-100 p-4 rounded-lg text-sm overflow-x-auto"><code><%= @formatted_content %></code></pre>
+</div>
+
+<.back navigate={if @is_public, do: ~p"/public", else: ~p"/documents"}>
+  Back to <%= if @is_public, do: "public", else: "my" %> documents
+</.back>

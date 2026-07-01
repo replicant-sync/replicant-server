@@ -23,6 +23,37 @@ end
 config :replicant_server, ReplicantServerWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# Basic auth for the web UI.
+#
+# TEMPORARY SAFETY MEASURE: the web UI login is currently password-less (a user
+# is identified by a self-asserted email), so the whole app MUST sit behind an
+# HTTP basic-auth gate. To make that protection impossible to forget, we fail
+# CLOSED — when running as a server (PHX_SERVER set), both BASIC_AUTH_USERNAME
+# and BASIC_AUTH_PASSWORD are required or the app refuses to boot.
+#
+# Remove this guard (and the basic-auth plug) once proper password-less auth
+# (magic-link / Shopify) is implemented.
+basic_auth_username = System.get_env("BASIC_AUTH_USERNAME")
+basic_auth_password = System.get_env("BASIC_AUTH_PASSWORD")
+
+if System.get_env("PHX_SERVER") &&
+     (is_nil(basic_auth_username) || is_nil(basic_auth_password)) do
+  raise """
+  Refusing to start: the web UI login is password-less, so the app must be
+  protected by HTTP basic auth — but BASIC_AUTH_USERNAME and/or
+  BASIC_AUTH_PASSWORD are not set.
+
+  Set both environment variables before starting the server.
+  (This guard can be removed once proper password-less auth is implemented.)
+  """
+end
+
+if basic_auth_username do
+  config :replicant_server,
+    basic_auth_username: basic_auth_username,
+    basic_auth_password: basic_auth_password
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

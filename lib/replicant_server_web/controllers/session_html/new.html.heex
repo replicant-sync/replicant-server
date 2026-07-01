@@ -1,0 +1,13 @@
+<div class="mx-auto max-w-sm mt-20">
+  <.header class="text-center">
+    Log in to Replicant
+    <:subtitle>Enter your email to continue</:subtitle>
+  </.header>
+
+  <.simple_form :let={_f} for={%{}} action={~p"/login"} as={:session} method="post">
+    <.input name="email" type="email" label="Email" required placeholder="you@example.com" />
+    <:actions>
+      <.button type="submit" class="w-full">Log in</.button>
+    </:actions>
+  </.simple_form>
+</div>

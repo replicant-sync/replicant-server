@@ -1,0 +1,79 @@
+<.header>
+  Public Documents
+  <:actions>
+    <.link navigate={~p"/public/new"}>
+      <.button>New Public Document</.button>
+    </.link>
+  </:actions>
+</.header>
+
+<div class="mb-4 mt-8 space-y-2">
+  <form phx-change="search" phx-submit="search">
+    <input
+      type="text"
+      name="search"
+      value={@search}
+      placeholder="Search titles and content..."
+      phx-debounce="300"
+      class="w-full rounded-lg border-zinc-300 text-sm focus:border-zinc-400 focus:ring-0"
+    />
+  </form>
+
+  <form :for={{filter, i} <- Enum.with_index(@filters)} phx-change="update-filter" class="flex gap-2 items-center">
+    <input type="hidden" name="index" value={i} />
+    <input
+      type="text"
+      name="fk"
+      value={filter.key}
+      placeholder="Key (e.g. author)"
+      phx-debounce="300"
+      class="w-40 rounded-lg border-zinc-300 text-sm focus:border-zinc-400 focus:ring-0"
+    />
+    <span class="text-zinc-500 text-sm">contains</span>
+    <input
+      type="text"
+      name="fv"
+      value={filter.value}
+      placeholder="Value"
+      phx-debounce="300"
+      class="w-40 rounded-lg border-zinc-300 text-sm focus:border-zinc-400 focus:ring-0"
+    />
+    <button type="button" phx-click="remove-filter" phx-value-index={i} class="text-red-500 hover:text-red-700 text-lg leading-none">
+      &times;
+    </button>
+  </form>
+
+  <button phx-click="add-filter" class="text-sm text-indigo-600 hover:text-indigo-500">
+    + Add property filter
+  </button>
+</div>
+
+<.table
+  :if={@documents != []}
+  id="public-documents"
+  rows={@documents}
+  row_id={&"doc-#{&1.id}"}
+  sort_by={@sort_by}
+  sort_order={@sort_order}
+>
+  <:col :let={doc} label="Title" sort_field={:title}><%= doc.title || "(untitled)" %></:col>
+  <:col :let={doc} label="Size" sort_field={:size_bytes}><%= doc.size_bytes || 0 %> bytes</:col>
+  <:col :let={doc} label="Revision" sort_field={:sync_revision}><%= doc.sync_revision %></:col>
+  <:col :let={doc} label="Updated" sort_field={:updated_at}><%= Calendar.strftime(doc.updated_at, "%Y-%m-%d %H:%M") %></:col>
+  <:action :let={doc}>
+    <.link navigate={~p"/public/#{doc.id}"}>View</.link>
+  </:action>
+  <:action :let={doc}>
+    <.link navigate={~p"/public/#{doc.id}/edit"}>Edit</.link>
+  </:action>
+  <:action :let={doc}>
+    <.link phx-click="delete" phx-value-id={doc.id} data-confirm="Are you sure?">
+      Delete
+    </.link>
+  </:action>
+</.table>
+
+<p :if={@documents == []} class="mt-8 text-sm text-zinc-500">
+  No public documents found.
+  <.link navigate={~p"/public/new"} class="text-indigo-600 hover:text-indigo-500">Create one</.link>
+</p>

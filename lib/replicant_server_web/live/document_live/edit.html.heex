@@ -1,0 +1,45 @@
+<.header>
+  <%= @page_title %>
+</.header>
+
+<div :if={@conflict_warning} class="mt-4 rounded-md bg-yellow-50 p-4">
+  <p class="text-sm text-yellow-800"><%= @conflict_warning %></p>
+</div>
+
+<p class="mt-4 text-sm text-zinc-500">
+  Set the <code class="bg-zinc-100 px-1 rounded">"title"</code> field in the JSON to name this document.
+</p>
+
+<div class="mt-4">
+  <label class="block text-sm font-semibold leading-6 text-zinc-800 mb-2">
+    JSON Content
+  </label>
+  <div
+    id="json-editor"
+    phx-hook="JsonEditor"
+    phx-update="ignore"
+    data-content={@content_json}
+    style="height: 500px;"
+  >
+  </div>
+  <p :if={@json_error} class="mt-2 text-sm text-rose-600"><%= @json_error %></p>
+</div>
+
+<div class="mt-6 flex items-center gap-4">
+  <.button type="button" phx-click={JS.dispatch("json-editor:save", to: "#json-editor")}>
+    Save
+  </.button>
+  <.link
+    navigate={
+      cond do
+        @document && @is_public -> ~p"/public/#{@document.id}"
+        @document -> ~p"/documents/#{@document.id}"
+        @is_public -> ~p"/public"
+        true -> ~p"/documents"
+      end
+    }
+    class="text-sm text-zinc-600 hover:text-zinc-900"
+  >
+    Cancel
+  </.link>
+</div>

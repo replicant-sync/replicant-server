@@ -25,7 +25,7 @@ defmodule ReplicantServer.Documents.ChangeEvent do
   def changeset(event, attrs) do
     event
     |> cast(attrs, [:document_id, :user_id, :event_type, :forward_patch, :reverse_patch, :applied, :server_timestamp])
-    |> validate_required([:document_id, :user_id, :event_type])
+    |> validate_required([:document_id, :event_type])
     |> validate_inclusion(:event_type, @event_types)
     |> foreign_key_constraint(:document_id)
     |> foreign_key_constraint(:user_id)

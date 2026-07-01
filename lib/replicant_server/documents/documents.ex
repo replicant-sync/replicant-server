@@ -25,15 +25,22 @@ defmodule ReplicantServer.Documents do
     )
   end
 
+  @allowed_sort_fields ~w(title size_bytes sync_revision updated_at created_at)a
+
   @doc """
-  Lists all non-deleted documents for a user.
+  Lists all non-deleted documents for a user with optional sorting, search, and filters.
   """
-  def list_user_documents(user_id) do
-    Repo.all(
-      from d in Document,
-        where: d.user_id == ^user_id and is_nil(d.deleted_at),
-        order_by: [desc: d.updated_at]
-    )
+  def list_user_documents(user_id, opts \\ []) do
+    sort_by = validate_field(opts[:sort_by], :updated_at)
+    sort_order = validate_order(opts[:sort_order], :desc)
+    search = opts[:search]
+    filters = opts[:filters] || []
+
+    from(d in Document, where: d.user_id == ^user_id and is_nil(d.deleted_at))
+    |> maybe_search(search)
+    |> apply_json_filters(filters)
+    |> order_by([d], [{^sort_order, ^sort_by}])
+    |> Repo.all()
   end
 
   @doc """
@@ -44,46 +51,52 @@ defmodule ReplicantServer.Documents do
   def create_document(user_id, attrs) do
     document_id = attrs[:id] || attrs["id"]
     content = attrs[:content] || attrs["content"]
+    content_hash = compute_hash(content)
 
-    Multi.new()
-    |> Multi.insert(:document, fn _ ->
-      %Document{}
-      |> Document.create_changeset(%{
-        id: document_id,
-        user_id: user_id,
-        content: content,
-        content_hash: compute_hash(content),
-        title: extract_title(content),
-        size_bytes: compute_size(content)
-      })
-    end)
-    |> Multi.insert(:event, fn %{document: doc} ->
-      %ChangeEvent{}
-      |> ChangeEvent.changeset(%{
-        document_id: doc.id,
-        user_id: user_id,
-        event_type: "create",
-        forward_patch: content
-      })
-    end)
-    |> Repo.transaction()
-    |> case do
-      {:ok, %{document: document}} ->
-        {:ok, document}
+    case find_by_content_hash(user_id, content_hash) do
+      %Document{} = existing ->
+        {:ok, existing}
 
-      {:error, :document, %Ecto.Changeset{errors: errors}, _} ->
-        if Keyword.has_key?(errors, :id) do
-          # Conflict - document already exists
-          case get_document(document_id) do
-            nil -> {:error, :insert_failed}
-            existing -> {:error, :conflict, existing}
-          end
-        else
-          {:error, :insert_failed}
+      nil ->
+        Multi.new()
+        |> Multi.insert(:document, fn _ ->
+          %Document{}
+          |> Document.create_changeset(%{
+            id: document_id,
+            user_id: user_id,
+            content: content,
+            content_hash: content_hash,
+            title: extract_title(content),
+            size_bytes: compute_size(content)
+          })
+        end)
+        |> Multi.insert(:event, fn %{document: doc} ->
+          %ChangeEvent{}
+          |> ChangeEvent.changeset(%{
+            document_id: doc.id,
+            user_id: user_id,
+            event_type: "create",
+            forward_patch: content
+          })
+        end)
+        |> Repo.transaction()
+        |> case do
+          {:ok, %{document: document}} ->
+            {:ok, document}
+
+          {:error, :document, %Ecto.Changeset{errors: errors}, _} ->
+            if Keyword.has_key?(errors, :id) do
+              case get_document(document_id) do
+                nil -> {:error, :insert_failed}
+                existing -> {:error, :conflict, existing}
+              end
+            else
+              {:error, :insert_failed}
+            end
+
+          {:error, _, _, _} ->
+            {:error, :insert_failed}
         end
-
-      {:error, _, _, _} ->
-        {:error, :insert_failed}
     end
   end
 
@@ -118,7 +131,7 @@ defmodule ReplicantServer.Documents do
 
     case Jsonpatch.apply_patch(normalized_patch, document.content) do
       {:ok, new_content} ->
-        reverse_patch = Jsonpatch.diff(new_content, document.content)
+        reverse_patch = json_diff(new_content, document.content)
 
         Multi.new()
         |> Multi.update(:document, fn _ ->
@@ -240,6 +253,276 @@ defmodule ReplicantServer.Documents do
 
   defp compute_size(_), do: 0
 
+  # --- Document copying / sharing ---
+
+  @doc """
+  Copies a single document to another user.
+
+  Creates a new document under `target_user_id` with the same content.
+  Skips if an identical document (by content hash) already exists for the target user.
+
+  Returns `{:ok, document}` or `{:error, reason}`.
+  """
+  def copy_document_to_user(document_id, source_user_id, target_user_id) do
+    case get_user_document(source_user_id, document_id) do
+      nil -> {:error, :not_found}
+      doc -> create_document(target_user_id, %{id: Ecto.UUID.generate(), content: doc.content})
+    end
+  end
+
+  @doc """
+  Copies all documents from one user to another.
+
+  Skips documents that already exist for the target user (by content hash).
+  Returns `{:ok, %{copied: count, skipped: count}}`.
+  """
+  def copy_all_documents(source_user_id, target_user_id) do
+    docs = list_user_documents(source_user_id)
+
+    results =
+      Enum.map(docs, fn doc ->
+        new_id = Ecto.UUID.generate()
+        {new_id, create_document(target_user_id, %{id: new_id, content: doc.content})}
+      end)
+
+    copied = Enum.count(results, fn
+      {new_id, {:ok, doc}} -> doc.id == new_id
+      _ -> false
+    end)
+
+    skipped = length(docs) - copied
+
+    {:ok, %{copied: copied, skipped: skipped}}
+  end
+
+  @doc """
+  Copies all documents from one user email to another.
+
+  Convenience wrapper that resolves emails to user IDs.
+  Returns `{:ok, %{copied: count, skipped: count}}` or `{:error, reason}`.
+
+  ## Example
+
+      iex> Documents.copy_all_documents_by_email("source@example.com", "target@example.com")
+      {:ok, %{copied: 42, skipped: 0}}
+  """
+  def copy_all_documents_by_email(source_email, target_email) do
+    source_id = ReplicantServer.Auth.deterministic_user_id(source_email)
+    target_id = ReplicantServer.Auth.deterministic_user_id(target_email)
+
+    # Ensure target user exists
+    ReplicantServer.Accounts.get_or_create_user(target_email)
+
+    copy_all_documents(source_id, target_id)
+  end
+
+  # --- Public documents (user_id IS NULL) ---
+
+  @doc """
+  Lists all non-deleted public documents (user_id is nil) with optional sorting, search, and filters.
+  """
+  def list_public_documents(opts \\ []) do
+    sort_by = validate_field(opts[:sort_by], :updated_at)
+    sort_order = validate_order(opts[:sort_order], :desc)
+    search = opts[:search]
+    filters = opts[:filters] || []
+
+    from(d in Document, where: is_nil(d.user_id) and is_nil(d.deleted_at))
+    |> maybe_search(search)
+    |> apply_json_filters(filters)
+    |> order_by([d], [{^sort_order, ^sort_by}])
+    |> Repo.all()
+  end
+
+  @doc """
+  Gets a single public document by ID.
+  """
+  def get_public_document(id) do
+    Repo.one(
+      from d in Document,
+        where: d.id == ^id and is_nil(d.user_id) and is_nil(d.deleted_at)
+    )
+  end
+
+  @doc """
+  Creates a public document (no user_id).
+  """
+  def create_public_document(attrs) do
+    document_id = attrs[:id] || attrs["id"] || Ecto.UUID.generate()
+    content = attrs[:content] || attrs["content"]
+    content_hash = compute_hash(content)
+
+    case find_public_by_content_hash(content_hash) do
+      %Document{} = existing ->
+        {:ok, existing}
+
+      nil ->
+        %Document{}
+        |> Document.create_changeset(%{
+          id: document_id,
+          user_id: nil,
+          content: content,
+          content_hash: content_hash,
+          title: extract_title(content),
+          size_bytes: compute_size(content)
+        })
+        |> Repo.insert()
+        |> case do
+          {:ok, doc} ->
+            broadcast("documents:public", {:document_created, doc})
+            broadcast_to_sync_clients("sync:public", "document_created", %{
+              id: doc.id,
+              content: doc.content,
+              sync_revision: doc.sync_revision,
+              content_hash: doc.content_hash
+            })
+            {:ok, doc}
+
+          {:error, changeset} ->
+            {:error, changeset}
+        end
+    end
+  end
+
+  @doc """
+  Replaces a document's content entirely. Computes JSON Patch internally
+  so event history is preserved. Works for both user and public documents.
+  """
+  def replace_content(document, new_content) when is_map(new_content) do
+    patch = json_diff(document.content, new_content)
+
+    if patch == [] do
+      {:ok, document}
+    else
+      case apply_update(document, patch) do
+        {:ok, updated} ->
+          broadcast("documents:#{document.id}", {:document_updated, updated})
+
+          if document.user_id do
+            broadcast("documents:user:#{document.user_id}", {:document_updated, updated})
+            broadcast_to_sync_clients("sync:user:#{document.user_id}", "document_updated", %{
+              id: updated.id,
+              patch: patch,
+              sync_revision: updated.sync_revision,
+              content_hash: updated.content_hash
+            })
+          else
+            broadcast("documents:public", {:document_updated, updated})
+            broadcast_to_sync_clients("sync:public", "document_updated", %{
+              id: updated.id,
+              patch: patch,
+              sync_revision: updated.sync_revision,
+              content_hash: updated.content_hash
+            })
+          end
+
+          {:ok, updated}
+
+        error ->
+          error
+      end
+    end
+  end
+
+  @doc """
+  Soft-deletes a public document.
+  """
+  def delete_public_document(document_id) do
+    case get_public_document(document_id) do
+      nil ->
+        {:error, :not_found}
+
+      document ->
+        document
+        |> Ecto.Changeset.change(deleted_at: DateTime.utc_now())
+        |> Repo.update()
+        |> case do
+          {:ok, doc} ->
+            broadcast("documents:public", {:document_deleted, doc})
+            broadcast_to_sync_clients("sync:public", "document_deleted", %{id: doc.id})
+            {:ok, doc}
+
+          error ->
+            error
+        end
+    end
+  end
+
+  defp find_by_content_hash(user_id, content_hash) when is_binary(content_hash) do
+    Repo.one(
+      from d in Document,
+        where: d.user_id == ^user_id and d.content_hash == ^content_hash and is_nil(d.deleted_at),
+        limit: 1
+    )
+  end
+
+  defp find_by_content_hash(_user_id, _content_hash), do: nil
+
+  defp find_public_by_content_hash(content_hash) when is_binary(content_hash) do
+    Repo.one(
+      from d in Document,
+        where: is_nil(d.user_id) and d.content_hash == ^content_hash and is_nil(d.deleted_at),
+        limit: 1
+    )
+  end
+
+  defp find_public_by_content_hash(_content_hash), do: nil
+
+  defp validate_field(nil, default), do: default
+  defp validate_field(field, default) when is_binary(field) do
+    case String.to_existing_atom(field) do
+      f when f in @allowed_sort_fields -> f
+      _ -> default
+    end
+  rescue
+    ArgumentError -> default
+  end
+  defp validate_field(field, default) when is_atom(field) do
+    if field in @allowed_sort_fields, do: field, else: default
+  end
+
+  defp validate_order(:asc, _default), do: :asc
+  defp validate_order("asc", _default), do: :asc
+  defp validate_order(:desc, _default), do: :desc
+  defp validate_order("desc", _default), do: :desc
+  defp validate_order(_, default), do: default
+
+  defp maybe_search(query, nil), do: query
+  defp maybe_search(query, ""), do: query
+  defp maybe_search(query, term) do
+    sanitized = "%#{sanitize_like(term)}%"
+    from d in query,
+      where: ilike(d.title, ^sanitized) or ilike(type(d.content, :string), ^sanitized)
+  end
+
+  defp apply_json_filters(query, []), do: query
+  defp apply_json_filters(query, filters) do
+    Enum.reduce(filters, query, fn {key, value}, q ->
+      if key != "" and value != "" do
+        sanitized = "%#{sanitize_like(value)}%"
+        from d in q,
+          where: ilike(fragment("?->>?", d.content, ^key), ^sanitized)
+      else
+        q
+      end
+    end)
+  end
+
+  defp sanitize_like(term) do
+    term
+    |> String.replace("\\", "\\\\")
+    |> String.replace("%", "\\%")
+    |> String.replace("_", "\\_")
+  end
+
+  defp broadcast(topic, message) do
+    Phoenix.PubSub.broadcast(ReplicantServer.PubSub, topic, message)
+  end
+
+  defp broadcast_to_sync_clients(topic, event, payload) do
+    ReplicantServerWeb.Endpoint.broadcast(topic, event, payload)
+  end
+
   defp normalize_patch(patch) when is_list(patch) do
     Enum.map(patch, &normalize_operation/1)
   end
@@ -255,4 +538,32 @@ defmodule ReplicantServer.Documents do
       {k, v} -> {String.to_existing_atom(k), v}
     end)
   end
+
+  # Compute a JSON Patch (RFC 6902) diff as plain maps.
+  # Jsonpatch.diff returns Operation structs that lack an "op" field and don't
+  # implement Jason.Encoder, so we convert immediately.
+  defp json_diff(source, target) do
+    Jsonpatch.diff(source, target)
+    |> Enum.map(&op_to_map/1)
+  end
+
+  defp op_to_map(%Jsonpatch.Operation.Add{path: path, value: value}),
+    do: %{op: "add", path: path, value: value}
+
+  defp op_to_map(%Jsonpatch.Operation.Remove{path: path}),
+    do: %{op: "remove", path: path}
+
+  defp op_to_map(%Jsonpatch.Operation.Replace{path: path, value: value}),
+    do: %{op: "replace", path: path, value: value}
+
+  defp op_to_map(%Jsonpatch.Operation.Move{path: path, from: from}),
+    do: %{op: "move", path: path, from: from}
+
+  defp op_to_map(%Jsonpatch.Operation.Copy{path: path, from: from}),
+    do: %{op: "copy", path: path, from: from}
+
+  defp op_to_map(%Jsonpatch.Operation.Test{path: path, value: value}),
+    do: %{op: "test", path: path, value: value}
+
+  defp op_to_map(op) when is_map(op), do: op
 end
