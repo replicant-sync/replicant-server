@@ -15,10 +15,11 @@ defmodule ReplicantServer.Accounts do
   between client and server.
   """
   def get_or_create_user(email) do
-    user_id = Auth.deterministic_user_id(email)
+    normalized = Auth.normalize_email(email)
+    user_id = Auth.deterministic_user_id(normalized)
 
     case get_user(user_id) do
-      nil -> create_user(user_id, email)
+      nil -> create_user(user_id, normalized)
       user -> {:ok, user}
     end
   end
@@ -34,7 +35,8 @@ defmodule ReplicantServer.Accounts do
   Gets a user by email.
   """
   def get_user_by_email(email) do
-    Repo.one(from u in User, where: u.email == ^email)
+    normalized = Auth.normalize_email(email)
+    Repo.one(from u in User, where: u.email == ^normalized)
   end
 
   @doc """
