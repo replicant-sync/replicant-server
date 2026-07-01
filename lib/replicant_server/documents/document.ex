@@ -10,6 +10,9 @@ defmodule ReplicantServer.Documents.Document do
     field :sync_revision, :integer, default: 1
     field :content_hash, :string
     field :title, :string
+    field :author_name, :string
+    field :visibility, :string, default: "private"
+    field :provenance, :map, default: %{}
     field :size_bytes, :integer
     field :deleted_at, :utc_datetime_usec
 
@@ -20,15 +23,17 @@ defmodule ReplicantServer.Documents.Document do
 
   def changeset(document, attrs) do
     document
-    |> cast(attrs, [:id, :user_id, :content, :sync_revision, :content_hash, :title, :size_bytes, :deleted_at])
+    |> cast(attrs, [:id, :user_id, :content, :sync_revision, :content_hash, :title, :author_name, :visibility, :provenance, :size_bytes, :deleted_at])
     |> validate_required([:id, :content])
+    |> validate_inclusion(:visibility, ["private", "public"])
     |> foreign_key_constraint(:user_id)
   end
 
   def create_changeset(document, attrs) do
     document
-    |> cast(attrs, [:id, :user_id, :content, :content_hash, :title, :size_bytes])
+    |> cast(attrs, [:id, :user_id, :content, :content_hash, :title, :author_name, :visibility, :provenance, :size_bytes])
     |> validate_required([:id, :content])
+    |> validate_inclusion(:visibility, ["private", "public"])
     |> put_change(:sync_revision, 1)
     |> foreign_key_constraint(:user_id)
     |> unique_constraint(:id, name: :documents_pkey)

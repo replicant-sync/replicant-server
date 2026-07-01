@@ -7,6 +7,7 @@ defmodule ReplicantServer.Accounts.User do
 
   schema "users" do
     field :email, :string
+    field :display_name, :string
     field :last_seen_at, :utc_datetime_usec
 
     has_many :documents, ReplicantServer.Documents.Document
@@ -16,7 +17,7 @@ defmodule ReplicantServer.Accounts.User do
 
   def changeset(user, attrs) do
     user
-    |> cast(attrs, [:id, :email, :last_seen_at])
+    |> cast(attrs, [:id, :email, :display_name, :last_seen_at])
     |> validate_required([:id, :email])
     |> unique_constraint(:email)
   end
