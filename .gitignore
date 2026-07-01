@@ -1,3 +1,6 @@
+# Contributor PII — real emails for factory minting (see .example)
+/priv/repo/factory_contributors.exs
+
 # The directory Mix will write compiled artifacts to.
 /_build/
 
