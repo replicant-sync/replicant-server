@@ -30,6 +30,10 @@ defmodule ReplicantServerWeb.SyncChannel do
       :error ->
         {:error, %{reason: "missing_params"}}
 
+      {:error, %Ecto.Changeset{} = changeset} ->
+        Logger.warning("User resolution failed on join: #{inspect(changeset.errors)}")
+        {:error, %{reason: "user_resolution_failed"}}
+
       {:error, reason} ->
         Logger.warning("Auth failed: #{inspect(reason)}")
         {:error, %{reason: to_string(reason)}}

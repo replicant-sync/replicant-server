@@ -70,6 +70,36 @@ defmodule ReplicantServerWeb.SyncChannelTest do
                socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
                |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:public", %{})
     end
+
+    test "rejects cleanly (no crash) when the email is taken under a different id", %{
+      credential: cred,
+      timestamp: timestamp
+    } do
+      # Simulate a legacy/orphan row: same email, different (old-namespace) id.
+      # get_or_create_user then fails the email unique constraint and returns
+      # {:error, changeset} — the join must reject cleanly, not crash.
+      email = "collide@example.com"
+      real_id = Auth.deterministic_user_id(email)
+
+      {:ok, _orphan} =
+        %ReplicantServer.Accounts.User{}
+        |> ReplicantServer.Accounts.User.changeset(%{id: Ecto.UUID.generate(), email: email})
+        |> ReplicantServer.Repo.insert()
+
+      signature = Auth.create_signature(cred.secret, timestamp, email, cred.api_key)
+
+      assert {:error, %{reason: reason}} =
+               socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
+               |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:user:#{real_id}", %{
+                 "email" => email,
+                 "api_key" => cred.api_key,
+                 "signature" => signature,
+                 "timestamp" => timestamp
+               })
+
+      # A clean rejection, not the "join crashed" wrapper of an unhandled raise.
+      assert reason == "user_resolution_failed"
+    end
   end
 
   describe "create_document" do
