@@ -40,7 +40,7 @@ defmodule ReplicantServer.Factory.Contributors do
   defp fetch_contributor(config, name) do
     case Map.fetch(config.contributors, name) do
       {:ok, entry} -> {:ok, entry}
-      :error -> :error
+      :error -> {:error, {:unknown_contributor, name}}
     end
   end
 end

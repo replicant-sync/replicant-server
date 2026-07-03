@@ -27,6 +27,13 @@ defmodule ReplicantServer.Factory.ContributorsTest do
              Contributors.resolve(@config, "", "12-tone-equal-temperament")
   end
 
+  test "resolve names the unknown contributor when an override points at a missing entry" do
+    config = %{@config | overrides: %{"7-limit-hexany" => "Typo Name"}}
+
+    assert {:error, {:unknown_contributor, "Typo Name"}} =
+             Contributors.resolve(config, "", "7-limit-hexany")
+  end
+
   test "load evaluates a config file" do
     path = Path.join(System.tmp_dir!(), "factory_contributors_#{System.unique_integer([:positive])}.exs")
     File.write!(path, inspect(@config, limit: :infinity))

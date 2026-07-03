@@ -43,6 +43,14 @@ defmodule ReplicantServer.Factory.BackfillTest do
     assert tet.author_name == "Entonal"
   end
 
+  test "backfill raises a clear error when an override names an unknown contributor", %{dir: dir} do
+    config = %{@config | overrides: %{"7-limit-hexany" => "Typo Name"}}
+
+    assert_raise ArgumentError, ~r/unknown contributor "Typo Name".+7-limit-hexany/, fn ->
+      Backfill.run(dir, config)
+    end
+  end
+
   test "backfill is idempotent — a second run updates, does not duplicate", %{dir: dir} do
     assert {:ok, %{created: 3}} = Backfill.run(dir, @config)
     assert {:ok, %{created: 0, updated: 3}} = Backfill.run(dir, @config)

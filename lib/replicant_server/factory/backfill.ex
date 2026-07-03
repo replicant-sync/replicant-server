@@ -54,7 +54,17 @@ defmodule ReplicantServer.Factory.Backfill do
     content = path |> File.read!() |> Jason.decode!()
     author = Map.get(content, "author", "")
 
-    {:ok, owner_entry} = Contributors.resolve(config, author, slug)
+    owner_entry =
+      case Contributors.resolve(config, author, slug) do
+        {:ok, entry} ->
+          entry
+
+        {:error, {:unknown_contributor, name}} ->
+          raise ArgumentError,
+                "unknown contributor #{inspect(name)} referenced by preset #{inspect(slug)} — " <>
+                  "check the contributors/overrides map in factory_contributors.exs"
+      end
+
     owner = Map.fetch!(minted, owner_entry.display_name)
 
     doc_id = Auth.deterministic_user_id(@doc_namespace <> "/" <> slug)
