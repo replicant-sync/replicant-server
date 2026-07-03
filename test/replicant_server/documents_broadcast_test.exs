@@ -140,6 +140,8 @@ defmodule ReplicantServer.DocumentsBroadcastTest do
       assert payload.content == %{"title" => "New Public Doc"}
       assert payload.sync_revision == 1
       assert payload.content_hash != nil
+      assert payload.visibility == "public"
+      assert Map.has_key?(payload, :author_name)
     end
   end
 

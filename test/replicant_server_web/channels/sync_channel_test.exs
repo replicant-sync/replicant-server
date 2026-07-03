@@ -120,6 +120,37 @@ defmodule ReplicantServerWeb.SyncChannelTest do
       assert_broadcast "document_created", %{id: ^doc_id}
     end
 
+    test "create envelope carries attribution", %{socket: socket} do
+      doc_id = UUID.uuid4()
+
+      ref =
+        push(socket, "create_document", %{
+          "id" => doc_id,
+          "content" => %{"title" => "Attributed"}
+        })
+
+      # test@example.com has no display_name -> email local part
+      assert_reply ref, :ok, %{id: ^doc_id, author_name: "test", visibility: "private", provenance: %{}}
+      assert_broadcast "document_created", %{id: ^doc_id, author_name: "test", visibility: "private", user_id: user_id}
+      assert user_id != nil
+    end
+
+    test "ignores client-supplied attribution fields", %{socket: socket} do
+      doc_id = UUID.uuid4()
+
+      ref =
+        push(socket, "create_document", %{
+          "id" => doc_id,
+          "content" => %{"title" => "Spoofed"},
+          "visibility" => "public",
+          "author_name" => "Mallory",
+          "provenance" => %{"forged" => true},
+          "user_id" => Ecto.UUID.generate()
+        })
+
+      assert_reply ref, :ok, %{id: ^doc_id, author_name: "test", visibility: "private"}
+    end
+
     test "returns conflict for duplicate ID", %{socket: socket} do
       doc_id = UUID.uuid4()
 
@@ -263,6 +294,16 @@ defmodule ReplicantServerWeb.SyncChannelTest do
       assert_reply ref, :ok, %{documents: docs, latest_sequence: seq}
       assert length(docs) == 3
       assert seq > 0
+    end
+
+    test "full sync documents carry attribution", %{socket: socket} do
+      ref = push(socket, "request_full_sync", %{})
+      assert_reply ref, :ok, %{documents: docs}
+
+      assert Enum.all?(docs, fn d ->
+               Map.has_key?(d, :author_name) and d.visibility in ["private", "public"] and
+                 Map.has_key?(d, :provenance)
+             end)
     end
   end
 

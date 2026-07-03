@@ -397,12 +397,13 @@ defmodule ReplicantServer.Documents do
         |> case do
           {:ok, doc} ->
             broadcast("documents:public", {:document_created, doc})
-            broadcast_to_sync_clients("sync:public", "document_created", %{
-              id: doc.id,
-              content: doc.content,
-              sync_revision: doc.sync_revision,
-              content_hash: doc.content_hash
-            })
+
+            broadcast_to_sync_clients(
+              "sync:public",
+              "document_created",
+              %{id: doc.id, content: doc.content, sync_revision: doc.sync_revision, content_hash: doc.content_hash}
+              |> Map.merge(envelope_fields(doc))
+            )
             {:ok, doc}
 
           {:error, changeset} ->
