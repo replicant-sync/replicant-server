@@ -182,6 +182,62 @@ defmodule ReplicantServerWeb.SyncChannelTest do
     end
   end
 
+  describe "owned public documents" do
+    setup context do
+      socket = join_user_channel(context)
+
+      {:ok, doc} =
+        ReplicantServer.Documents.create_document(context.user_id, %{
+          "id" => UUID.uuid4(),
+          "content" => %{"title" => "Public tuning"}
+        })
+
+      {:ok, doc} =
+        doc
+        |> Ecto.Changeset.change(visibility: "public")
+        |> ReplicantServer.Repo.update()
+
+      ReplicantServerWeb.Endpoint.subscribe("sync:public")
+      %{socket: socket, doc: doc}
+    end
+
+    test "updating an owned public document broadcasts to sync:public", %{socket: socket, doc: doc} do
+      doc_id = doc.id
+
+      ref =
+        push(socket, "update_document", %{
+          "id" => doc_id,
+          "patch" => [%{op: "replace", path: "/title", value: "Renamed"}],
+          "content_hash" => doc.content_hash
+        })
+
+      assert_reply ref, :ok, _
+      assert_receive %Phoenix.Socket.Broadcast{topic: "sync:public", event: "document_updated", payload: %{id: ^doc_id}}
+    end
+
+    test "deleting an owned public document broadcasts to sync:public", %{socket: socket, doc: doc} do
+      doc_id = doc.id
+
+      ref = push(socket, "delete_document", %{"id" => doc_id})
+
+      assert_reply ref, :ok
+      assert_receive %Phoenix.Socket.Broadcast{topic: "sync:public", event: "document_deleted", payload: %{id: ^doc_id}}
+    end
+
+    test "a private document does not broadcast to sync:public", %{socket: socket} do
+      doc_id = UUID.uuid4()
+
+      ref =
+        push(socket, "create_document", %{
+          "id" => doc_id,
+          "content" => %{"title" => "Private"}
+        })
+
+      assert_reply ref, :ok, _
+      refute_receive %Phoenix.Socket.Broadcast{topic: "sync:public", event: "document_created"}
+    end
+  end
+
   describe "full_sync" do
     setup context do
       socket = join_user_channel(context)

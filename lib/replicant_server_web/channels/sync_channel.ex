@@ -58,10 +58,7 @@ defmodule ReplicantServerWeb.SyncChannel do
         }
 
         broadcast_except(socket, "document_created", payload)
-
-        if is_nil(document.user_id) do
-          socket.endpoint.broadcast("sync:public", "document_created", payload)
-        end
+        maybe_broadcast_public(socket, document, "document_created", payload)
 
         {:reply, {:ok, %{id: document.id, sync_revision: document.sync_revision, content_hash: document.content_hash}},
          socket}
@@ -101,10 +98,7 @@ defmodule ReplicantServerWeb.SyncChannel do
         }
 
         broadcast_except(socket, "document_updated", update_payload)
-
-        if is_nil(document.user_id) do
-          socket.endpoint.broadcast("sync:public", "document_updated", update_payload)
-        end
+        maybe_broadcast_public(socket, document, "document_updated", update_payload)
 
         {:reply, {:ok, %{sync_revision: document.sync_revision}}, socket}
 
@@ -140,10 +134,7 @@ defmodule ReplicantServerWeb.SyncChannel do
         delete_payload = %{id: document_id}
 
         broadcast_except(socket, "document_deleted", delete_payload)
-
-        if is_nil(document.user_id) do
-          socket.endpoint.broadcast("sync:public", "document_deleted", delete_payload)
-        end
+        maybe_broadcast_public(socket, document, "document_deleted", delete_payload)
 
         {:reply, :ok, socket}
 
@@ -237,5 +228,13 @@ defmodule ReplicantServerWeb.SyncChannel do
 
   defp broadcast_except(socket, event, payload) do
     broadcast_from!(socket, event, payload)
+  end
+
+  # Publicly visible documents fan out to the sync:public topic in addition
+  # to the owner's topic, so public-catalog subscribers stay current.
+  defp maybe_broadcast_public(socket, document, event, payload) do
+    if document.visibility == "public" do
+      socket.endpoint.broadcast("sync:public", event, payload)
+    end
   end
 end
