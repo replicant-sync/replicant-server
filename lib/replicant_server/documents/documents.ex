@@ -212,7 +212,8 @@ defmodule ReplicantServer.Documents do
       from e in ChangeEvent,
         where: e.user_id == ^user_id and e.sequence > ^last_sequence,
         order_by: [asc: e.sequence],
-        limit: ^limit
+        limit: ^limit,
+        preload: :document
     )
   end
 

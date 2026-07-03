@@ -203,6 +203,12 @@ defmodule ReplicantServerWeb.SyncChannel do
           reverse_patch: event.reverse_patch,
           server_timestamp: event.server_timestamp
         }
+        |> Map.merge(
+          case event.document do
+            %Documents.Document{} = doc -> Documents.envelope_fields(doc)
+            _ -> %{}
+          end
+        )
       end)
 
     {:reply, {:ok, %{events: event_list, latest_sequence: latest_sequence}}, socket}

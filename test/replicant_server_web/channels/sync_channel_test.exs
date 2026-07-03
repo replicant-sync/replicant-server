@@ -330,5 +330,19 @@ defmodule ReplicantServerWeb.SyncChannelTest do
       assert length(events) >= 1
       assert hd(events).event_type == "create"
     end
+
+    test "events carry the document's attribution", %{socket: socket} do
+      doc_id = UUID.uuid4()
+      ref = push(socket, "create_document", %{"id" => doc_id, "content" => %{"title" => "Evented"}})
+      assert_reply ref, :ok, _
+
+      ref = push(socket, "get_changes_since", %{"last_sequence" => 0})
+      assert_reply ref, :ok, %{events: events}
+
+      event = Enum.find(events, &(&1.id == doc_id))
+      assert event.author_name == "test"
+      assert event.visibility == "private"
+      assert event.provenance == %{}
+    end
   end
 end
