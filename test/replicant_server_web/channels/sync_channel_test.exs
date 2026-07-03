@@ -343,6 +343,7 @@ defmodule ReplicantServerWeb.SyncChannelTest do
       assert event.author_name == "test"
       assert event.visibility == "private"
       assert event.provenance == %{}
+      refute Map.has_key?(event, :user_id)
     end
   end
 end

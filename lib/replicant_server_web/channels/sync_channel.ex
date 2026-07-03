@@ -205,7 +205,7 @@ defmodule ReplicantServerWeb.SyncChannel do
         }
         |> Map.merge(
           case event.document do
-            %Documents.Document{} = doc -> Documents.envelope_fields(doc)
+            %Documents.Document{} = doc -> Documents.envelope_fields(doc) |> Map.delete(:user_id)
             _ -> %{}
           end
         )
