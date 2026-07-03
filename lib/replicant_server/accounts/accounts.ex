@@ -49,6 +49,13 @@ defmodule ReplicantServer.Accounts do
   end
 
   @doc """
+  The user's presentable name: `display_name` when set, otherwise the local
+  part of their email.
+  """
+  def display_name(%User{display_name: name}) when is_binary(name) and name != "", do: name
+  def display_name(%User{email: email}), do: email |> String.split("@") |> hd()
+
+  @doc """
   Gets a user by ID.
   """
   def get_user(id) do

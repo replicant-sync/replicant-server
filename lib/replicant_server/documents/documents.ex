@@ -268,17 +268,22 @@ defmodule ReplicantServer.Documents do
   def copy_document_to_user(document_id, source_user_id, target_user_id) do
     case get_user_document(source_user_id, document_id) do
       nil -> {:error, :not_found}
-      doc -> create_document(target_user_id, copy_attrs(doc, target_user_id))
+      doc -> create_document(target_user_id, copy_attrs(doc, target_author_name(target_user_id)))
     end
   end
 
-  defp copy_attrs(source_doc, target_user_id) do
-    target = ReplicantServer.Accounts.get_user(target_user_id)
+  defp target_author_name(target_user_id) do
+    case ReplicantServer.Accounts.get_user(target_user_id) do
+      nil -> nil
+      user -> ReplicantServer.Accounts.display_name(user)
+    end
+  end
 
+  defp copy_attrs(source_doc, author_name) do
     %{
       id: Ecto.UUID.generate(),
       content: source_doc.content,
-      author_name: target && target.display_name,
+      author_name: author_name,
       provenance: %{
         "copied_from" => source_doc.id,
         "source_author_id" => source_doc.user_id,
@@ -295,10 +300,11 @@ defmodule ReplicantServer.Documents do
   """
   def copy_all_documents(source_user_id, target_user_id) do
     docs = list_user_documents(source_user_id)
+    author_name = target_author_name(target_user_id)
 
     results =
       Enum.map(docs, fn doc ->
-        attrs = copy_attrs(doc, target_user_id)
+        attrs = copy_attrs(doc, author_name)
         {attrs.id, create_document(target_user_id, attrs)}
       end)
 
