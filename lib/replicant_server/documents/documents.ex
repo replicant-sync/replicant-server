@@ -58,6 +58,9 @@ defmodule ReplicantServer.Documents do
         {:ok, existing}
 
       nil ->
+        author_name =
+          attrs[:author_name] || attrs["author_name"] || target_author_name(user_id)
+
         Multi.new()
         |> Multi.insert(:document, fn _ ->
           %Document{}
@@ -67,7 +70,7 @@ defmodule ReplicantServer.Documents do
             content: content,
             content_hash: content_hash,
             title: extract_title(content),
-            author_name: attrs[:author_name] || attrs["author_name"],
+            author_name: author_name,
             provenance: attrs[:provenance] || attrs["provenance"] || %{},
             size_bytes: compute_size(content)
           })
@@ -549,6 +552,18 @@ defmodule ReplicantServer.Documents do
       topic,
       %Phoenix.Socket.Broadcast{topic: topic, event: event, payload: payload}
     )
+  end
+
+  @doc """
+  Document-level attribution carried in every document-bearing sync envelope.
+  """
+  def envelope_fields(%Document{} = doc) do
+    %{
+      user_id: doc.user_id,
+      author_name: doc.author_name,
+      visibility: doc.visibility,
+      provenance: doc.provenance
+    }
   end
 
   defp normalize_patch(patch) when is_list(patch) do

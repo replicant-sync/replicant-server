@@ -304,4 +304,48 @@ defmodule ReplicantServer.DocumentsTest do
       refute Documents.verify_hash(%{"other" => "data"}, hash)
     end
   end
+
+  describe "envelope attribution" do
+    test "create_document stamps author_name from the owner's presentable name" do
+      {:ok, user} = ReplicantServer.Accounts.get_or_create_user("carla@example.com")
+
+      {:ok, doc} =
+        Documents.create_document(user.id, %{
+          "id" => Ecto.UUID.generate(),
+          "content" => %{"title" => "Carla's tuning"}
+        })
+
+      assert doc.author_name == "carla"
+    end
+
+    test "create_document keeps an explicitly provided author_name (copy path)" do
+      {:ok, user} = ReplicantServer.Accounts.get_or_create_user("carla@example.com")
+
+      {:ok, doc} =
+        Documents.create_document(user.id, %{
+          id: Ecto.UUID.generate(),
+          content: %{"title" => "Copy"},
+          author_name: "Sevish"
+        })
+
+      assert doc.author_name == "Sevish"
+    end
+
+    test "envelope_fields returns the four attribution keys" do
+      {:ok, user} = ReplicantServer.Accounts.upsert_user("rr@robertrich.com", "Robert Rich")
+
+      {:ok, doc} =
+        Documents.create_document(user.id, %{
+          "id" => Ecto.UUID.generate(),
+          "content" => %{"title" => "Partch"}
+        })
+
+      assert Documents.envelope_fields(doc) == %{
+               user_id: user.id,
+               author_name: "Robert Rich",
+               visibility: "private",
+               provenance: %{}
+             }
+    end
+  end
 end
