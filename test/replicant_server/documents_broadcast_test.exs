@@ -163,4 +163,21 @@ defmodule ReplicantServer.DocumentsBroadcastTest do
       assert payload.id == doc.id
     end
   end
+
+  describe "sync broadcasts are delivered via ReplicantServer.PubSub (no web Endpoint dependency)" do
+    test "create_public_document delivers document_created through the library PubSub" do
+      Phoenix.PubSub.subscribe(ReplicantServer.PubSub, "sync:public")
+
+      {:ok, doc} =
+        Documents.create_public_document(%{"content" => %{"title" => "PubSub-direct"}})
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        topic: "sync:public",
+        event: "document_created",
+        payload: payload
+      }
+
+      assert payload.id == doc.id
+    end
+  end
 end

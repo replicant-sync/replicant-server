@@ -67,6 +67,8 @@ defmodule ReplicantServer.Documents do
             content: content,
             content_hash: content_hash,
             title: extract_title(content),
+            author_name: attrs[:author_name] || attrs["author_name"],
+            provenance: attrs[:provenance] || attrs["provenance"] || %{},
             size_bytes: compute_size(content)
           })
         end)
@@ -266,8 +268,28 @@ defmodule ReplicantServer.Documents do
   def copy_document_to_user(document_id, source_user_id, target_user_id) do
     case get_user_document(source_user_id, document_id) do
       nil -> {:error, :not_found}
-      doc -> create_document(target_user_id, %{id: Ecto.UUID.generate(), content: doc.content})
+      doc -> create_document(target_user_id, copy_attrs(doc, target_author_name(target_user_id)))
     end
+  end
+
+  defp target_author_name(target_user_id) do
+    case ReplicantServer.Accounts.get_user(target_user_id) do
+      nil -> nil
+      user -> ReplicantServer.Accounts.display_name(user)
+    end
+  end
+
+  defp copy_attrs(source_doc, author_name) do
+    %{
+      id: Ecto.UUID.generate(),
+      content: source_doc.content,
+      author_name: author_name,
+      provenance: %{
+        "copied_from" => source_doc.id,
+        "source_author_id" => source_doc.user_id,
+        "source_author_name" => source_doc.author_name
+      }
+    }
   end
 
   @doc """
@@ -278,11 +300,12 @@ defmodule ReplicantServer.Documents do
   """
   def copy_all_documents(source_user_id, target_user_id) do
     docs = list_user_documents(source_user_id)
+    author_name = target_author_name(target_user_id)
 
     results =
       Enum.map(docs, fn doc ->
-        new_id = Ecto.UUID.generate()
-        {new_id, create_document(target_user_id, %{id: new_id, content: doc.content})}
+        attrs = copy_attrs(doc, author_name)
+        {attrs.id, create_document(target_user_id, attrs)}
       end)
 
     copied = Enum.count(results, fn
@@ -327,7 +350,7 @@ defmodule ReplicantServer.Documents do
     search = opts[:search]
     filters = opts[:filters] || []
 
-    from(d in Document, where: is_nil(d.user_id) and is_nil(d.deleted_at))
+    from(d in Document, where: d.visibility == "public" and is_nil(d.deleted_at))
     |> maybe_search(search)
     |> apply_json_filters(filters)
     |> order_by([d], [{^sort_order, ^sort_by}])
@@ -340,7 +363,7 @@ defmodule ReplicantServer.Documents do
   def get_public_document(id) do
     Repo.one(
       from d in Document,
-        where: d.id == ^id and is_nil(d.user_id) and is_nil(d.deleted_at)
+        where: d.id == ^id and d.visibility == "public" and is_nil(d.deleted_at)
     )
   end
 
@@ -364,6 +387,7 @@ defmodule ReplicantServer.Documents do
           content: content,
           content_hash: content_hash,
           title: extract_title(content),
+          visibility: "public",
           size_bytes: compute_size(content)
         })
         |> Repo.insert()
@@ -461,7 +485,7 @@ defmodule ReplicantServer.Documents do
   defp find_public_by_content_hash(content_hash) when is_binary(content_hash) do
     Repo.one(
       from d in Document,
-        where: is_nil(d.user_id) and d.content_hash == ^content_hash and is_nil(d.deleted_at),
+        where: d.visibility == "public" and d.content_hash == ^content_hash and is_nil(d.deleted_at),
         limit: 1
     )
   end
@@ -520,7 +544,11 @@ defmodule ReplicantServer.Documents do
   end
 
   defp broadcast_to_sync_clients(topic, event, payload) do
-    ReplicantServerWeb.Endpoint.broadcast(topic, event, payload)
+    Phoenix.PubSub.broadcast(
+      ReplicantServer.PubSub,
+      topic,
+      %Phoenix.Socket.Broadcast{topic: topic, event: event, payload: payload}
+    )
   end
 
   defp normalize_patch(patch) when is_list(patch) do

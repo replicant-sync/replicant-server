@@ -54,6 +54,15 @@ if basic_auth_username do
     basic_auth_password: basic_auth_password
 end
 
+# Allow the dev server to target an alternate database via DATABASE_URL.
+# The integration-test harness uses this to run against a throwaway clean
+# database without touching the developer's local dev database.
+if config_env() == :dev do
+  if database_url = System.get_env("DATABASE_URL") do
+    config :replicant_server, ReplicantServer.Repo, url: database_url
+  end
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

@@ -70,6 +70,36 @@ defmodule ReplicantServerWeb.SyncChannelTest do
                socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
                |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:public", %{})
     end
+
+    test "rejects cleanly (no crash) when the email is taken under a different id", %{
+      credential: cred,
+      timestamp: timestamp
+    } do
+      # Simulate a legacy/orphan row: same email, different (old-namespace) id.
+      # get_or_create_user then fails the email unique constraint and returns
+      # {:error, changeset} — the join must reject cleanly, not crash.
+      email = "collide@example.com"
+      real_id = Auth.deterministic_user_id(email)
+
+      {:ok, _orphan} =
+        %ReplicantServer.Accounts.User{}
+        |> ReplicantServer.Accounts.User.changeset(%{id: Ecto.UUID.generate(), email: email})
+        |> ReplicantServer.Repo.insert()
+
+      signature = Auth.create_signature(cred.secret, timestamp, email, cred.api_key)
+
+      assert {:error, %{reason: reason}} =
+               socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
+               |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:user:#{real_id}", %{
+                 "email" => email,
+                 "api_key" => cred.api_key,
+                 "signature" => signature,
+                 "timestamp" => timestamp
+               })
+
+      # A clean rejection, not the "join crashed" wrapper of an unhandled raise.
+      assert reason == "user_resolution_failed"
+    end
   end
 
   describe "create_document" do
@@ -149,6 +179,62 @@ defmodule ReplicantServerWeb.SyncChannelTest do
         })
 
       assert_reply ref, :error, %{reason: "hash_mismatch", current_revision: 1}
+    end
+  end
+
+  describe "owned public documents" do
+    setup context do
+      socket = join_user_channel(context)
+
+      {:ok, doc} =
+        ReplicantServer.Documents.create_document(context.user_id, %{
+          "id" => UUID.uuid4(),
+          "content" => %{"title" => "Public tuning"}
+        })
+
+      {:ok, doc} =
+        doc
+        |> Ecto.Changeset.change(visibility: "public")
+        |> ReplicantServer.Repo.update()
+
+      ReplicantServerWeb.Endpoint.subscribe("sync:public")
+      %{socket: socket, doc: doc}
+    end
+
+    test "updating an owned public document broadcasts to sync:public", %{socket: socket, doc: doc} do
+      doc_id = doc.id
+
+      ref =
+        push(socket, "update_document", %{
+          "id" => doc_id,
+          "patch" => [%{op: "replace", path: "/title", value: "Renamed"}],
+          "content_hash" => doc.content_hash
+        })
+
+      assert_reply ref, :ok, _
+      assert_receive %Phoenix.Socket.Broadcast{topic: "sync:public", event: "document_updated", payload: %{id: ^doc_id}}
+    end
+
+    test "deleting an owned public document broadcasts to sync:public", %{socket: socket, doc: doc} do
+      doc_id = doc.id
+
+      ref = push(socket, "delete_document", %{"id" => doc_id})
+
+      assert_reply ref, :ok
+      assert_receive %Phoenix.Socket.Broadcast{topic: "sync:public", event: "document_deleted", payload: %{id: ^doc_id}}
+    end
+
+    test "a private document does not broadcast to sync:public", %{socket: socket} do
+      doc_id = UUID.uuid4()
+
+      ref =
+        push(socket, "create_document", %{
+          "id" => doc_id,
+          "content" => %{"title" => "Private"}
+        })
+
+      assert_reply ref, :ok, _
+      refute_receive %Phoenix.Socket.Broadcast{topic: "sync:public", event: "document_created"}
     end
   end
 

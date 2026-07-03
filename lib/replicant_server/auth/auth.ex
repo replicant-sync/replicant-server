@@ -13,8 +13,9 @@ defmodule ReplicantServer.Auth do
   @api_key_prefix "rpa_"
   @secret_prefix "rps_"
 
-  # App namespace for deterministic user IDs (matches Rust client)
-  @app_namespace_id "com.example.sync-task-list"
+  # App namespace for deterministic user IDs. FROZEN — must match every client
+  # (Rust replicant-client). Changing this re-maps every email to a new id.
+  @app_namespace_id "com.nodeaudio.entonal"
 
   @doc """
   Verifies an HMAC signature for API authentication.
@@ -62,14 +63,26 @@ defmodule ReplicantServer.Auth do
   end
 
   @doc """
+  Normalizes an email for identity derivation: trim surrounding whitespace,
+  then Unicode-downcase. MUST stay byte-identical to the client implementation
+  (Rust replicant-client) — otherwise the same person derives different IDs.
+  Deliberately does NOT do provider-specific alias canonicalization (e.g. Gmail dots).
+  """
+  def normalize_email(email) when is_binary(email) do
+    email |> String.trim() |> String.downcase()
+  end
+
+  @doc """
   Generates a deterministic user ID from email using UUID v5.
 
-  This matches the Rust client implementation to ensure the same
-  user ID is generated on both client and server.
+  Normalizes the email first, then derives `uuid5(uuid5(DNS, namespace), email)`.
+  This matches the client implementation so the same user ID is produced on both
+  client and server.
   """
   def deterministic_user_id(email) do
+    normalized = normalize_email(email)
     app_namespace = UUID.uuid5(:dns, @app_namespace_id)
-    UUID.uuid5(app_namespace, email)
+    UUID.uuid5(app_namespace, normalized)
   end
 
   # Private functions
