@@ -47,21 +47,26 @@ defmodule ReplicantServerWeb.SyncChannel do
   @impl true
   def handle_in("create_document", payload, socket) do
     user_id = socket.assigns.user_id
+    payload = Map.drop(payload, ["author_name", "visibility", "provenance", "user_id"])
 
     case Documents.create_document(user_id, payload) do
       {:ok, document} ->
-        payload = %{
-          id: document.id,
-          content: document.content,
-          sync_revision: document.sync_revision,
-          content_hash: document.content_hash
-        }
+        payload =
+          %{
+            id: document.id,
+            content: document.content,
+            sync_revision: document.sync_revision,
+            content_hash: document.content_hash
+          }
+          |> Map.merge(Documents.envelope_fields(document))
 
         broadcast_except(socket, "document_created", payload)
         maybe_broadcast_public(socket, document, "document_created", payload)
 
-        {:reply, {:ok, %{id: document.id, sync_revision: document.sync_revision, content_hash: document.content_hash}},
-         socket}
+        {:reply,
+         {:ok,
+          %{id: document.id, sync_revision: document.sync_revision, content_hash: document.content_hash}
+          |> Map.merge(Documents.envelope_fields(document))}, socket}
 
       {:error, :conflict, existing} ->
         {:reply,
@@ -170,6 +175,7 @@ defmodule ReplicantServerWeb.SyncChannel do
           created_at: doc.created_at,
           updated_at: doc.updated_at
         }
+        |> Map.merge(Documents.envelope_fields(doc))
       end)
 
     {:reply, {:ok, %{documents: doc_list, latest_sequence: latest_sequence}}, socket}
@@ -197,6 +203,12 @@ defmodule ReplicantServerWeb.SyncChannel do
           reverse_patch: event.reverse_patch,
           server_timestamp: event.server_timestamp
         }
+        |> Map.merge(
+          case event.document do
+            %Documents.Document{} = doc -> Documents.envelope_fields(doc) |> Map.delete(:user_id)
+            _ -> %{}
+          end
+        )
       end)
 
     {:reply, {:ok, %{events: event_list, latest_sequence: latest_sequence}}, socket}
