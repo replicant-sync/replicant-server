@@ -42,32 +42,13 @@ defmodule ReplicantServer.MixProject do
       {:phoenix_ecto, "~> 4.5"},
       {:ecto_sql, "~> 3.13"},
       {:postgrex, ">= 0.0.0"},
-      {:phoenix_live_dashboard, "~> 0.8.3"},
-      {:swoosh, "~> 1.16"},
-      {:req, "~> 0.5"},
-      {:telemetry_metrics, "~> 1.0"},
-      {:telemetry_poller, "~> 1.0"},
-      {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
-      {:dns_cluster, "~> 0.2.0"},
-      {:bandit, "~> 1.5"},
-      
-      # Sync server dependencies
-      {:uuid, "~> 1.1"},      # Deterministic UUID v5
-      {:jsonpatch, "~> 2.3"}, # JSON Patch RFC 6902
 
-      # LiveView + asset tooling
-      {:phoenix_live_view, "~> 1.0"},
-      {:phoenix_html, "~> 4.2"},
-      {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
-      {:tailwind, "~> 0.4", runtime: Mix.env() == :dev},
-      {:heroicons,
-       github: "tailwindlabs/heroicons",
-       tag: "v2.1.1",
-       sparse: "optimized",
-       app: false,
-       compile: false,
-       depth: 1}
+      # Sync server dependencies
+      # Deterministic UUID v5
+      {:uuid, "~> 1.1"},
+      # JSON Patch RFC 6902
+      {:jsonpatch, "~> 2.3"}
     ]
   end
 
@@ -79,17 +60,10 @@ defmodule ReplicantServer.MixProject do
   # See the documentation for `Mix` for more info on aliases.
   defp aliases do
     [
-      setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],
+      setup: ["deps.get", "ecto.setup"],
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
-      "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
-      "assets.build": ["tailwind replicant_server", "esbuild replicant_server"],
-      "assets.deploy": [
-        "tailwind replicant_server --minify",
-        "esbuild replicant_server --minify",
-        "phx.digest"
-      ],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
     ]
   end

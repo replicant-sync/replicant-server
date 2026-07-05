@@ -2,22 +2,21 @@ defmodule ReplicantServer.BoundaryTest do
   use ExUnit.Case, async: true
 
   @moduledoc """
-  Enforces the library/web boundary documented in CLAUDE.md: library
-  modules must not reference the web application. `application.ex` is
-  the composition root and is exempt until the web app is extracted.
+  The sync library must not reference any web application module.
   """
 
-  @library_dirs ["lib/replicant_server", "lib/mix"]
-  @exempt ["lib/replicant_server/application.ex"]
+  @library_dirs ["lib", "test"]
+  @self "test/replicant_server/boundary_test.exs"
+  @forbidden "ReplicantServer" <> "Web"
 
-  test "library modules do not reference ReplicantServerWeb" do
+  test "no module references the web application" do
     violations =
       @library_dirs
-      |> Enum.flat_map(&Path.wildcard("#{&1}/**/*.ex"))
-      |> Kernel.--(@exempt)
-      |> Enum.filter(&(File.read!(&1) =~ "ReplicantServerWeb"))
+      |> Enum.flat_map(&Path.wildcard("#{&1}/**/*.{ex,exs}"))
+      |> Kernel.--([@self])
+      |> Enum.filter(&(File.read!(&1) =~ @forbidden))
 
     assert violations == [],
-           "library files reference ReplicantServerWeb: #{inspect(violations)}"
+           "files reference #{@forbidden}: #{inspect(violations)}"
   end
 end

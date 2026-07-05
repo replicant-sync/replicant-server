@@ -2,16 +2,16 @@ defmodule ReplicantServer.DocumentsBroadcastTest do
   @moduledoc """
   Tests that Documents context mutations broadcast to sync channel topics.
 
-  These verify the web UI → sync client broadcast path:
-  when a document is edited via LiveView, the change should be
-  broadcast on the appropriate sync:* Phoenix Channel topic so
-  connected Replicant clients receive it in real time.
+  These verify the host-app → sync client broadcast path:
+  when a document is edited through the Documents context, the change
+  should be broadcast on the appropriate sync:* Phoenix Channel topic
+  so connected Replicant clients receive it in real time.
   """
   use ReplicantServer.DataCase
 
   alias ReplicantServer.{Auth, Accounts, Documents}
 
-  @endpoint ReplicantServerWeb.Endpoint
+  @endpoint ReplicantServer.Sync.TestEndpoint
 
   setup do
     email = "broadcast-test@example.com"
@@ -33,7 +33,8 @@ defmodule ReplicantServer.DocumentsBroadcastTest do
       @endpoint.subscribe("sync:user:#{user_id}")
 
       # Simulate web UI edit
-      {:ok, _updated} = Documents.replace_content(doc, %{"title" => "Edited via web", "data" => "test"})
+      {:ok, _updated} =
+        Documents.replace_content(doc, %{"title" => "Edited via web", "data" => "test"})
 
       # Assert broadcast arrived on sync channel
       assert_receive %Phoenix.Socket.Broadcast{

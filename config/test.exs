@@ -13,28 +13,16 @@ config :replicant_server, ReplicantServer.Repo,
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 
-# We don't run a server during test. If one is required,
-# you can enable the server option below.
-config :replicant_server, ReplicantServerWeb.Endpoint,
-  http: [ip: {127, 0, 0, 1}, port: 4002],
+# Test-only endpoint hosting the sync socket (see ReplicantServer.Sync.ChannelCase)
+config :replicant_server, ReplicantServer.Sync.TestEndpoint,
   secret_key_base: "oD6r/Ez+1r8Dh1dGG7dZ8BQS3wcNOYQsXgrATKe1LCimCFRoO346xxuWJBbga1bE",
+  pubsub_server: ReplicantServer.PubSub,
   server: false
 
-# Endpoint hosting the sync socket in channel tests (see ReplicantServer.Sync.ChannelCase)
-config :replicant_server, :sync_test_endpoint, ReplicantServerWeb.Endpoint
-
-# In test we don't send emails
-config :replicant_server, ReplicantServer.Mailer, adapter: Swoosh.Adapters.Test
-
-# Disable swoosh api client as it is only required for production adapters
-config :swoosh, :api_client, false
+config :replicant_server, :sync_test_endpoint, ReplicantServer.Sync.TestEndpoint
 
 # Print only warnings and errors during test
 config :logger, level: :warning
 
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
-
-# Sort query params output of verified routes for robust url comparisons
-config :phoenix,
-  sort_verified_routes_query_params: true
