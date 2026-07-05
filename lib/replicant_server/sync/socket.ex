@@ -1,7 +1,7 @@
-defmodule ReplicantServerWeb.UserSocket do
+defmodule ReplicantServer.Sync.Socket do
   use Phoenix.Socket
 
-  channel "sync:*", ReplicantServerWeb.SyncChannel
+  channel "sync:*", ReplicantServer.Sync.Channel
 
   @impl true
   def connect(_params, socket, _connect_info) do

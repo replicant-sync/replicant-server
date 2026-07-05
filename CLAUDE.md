@@ -18,10 +18,14 @@ Always use the `json_diff/2` helper in `Documents` which wraps `Jsonpatch.diff` 
 
 `Jsonpatch.apply_patch` accepts both struct and map formats, so `json_diff` output works everywhere.
 
+## Library / Web Boundary
+
+The repo is being prepared to split into a sync **library** (`ReplicantServer.*`: Documents, Accounts, Auth, OT, `ReplicantServer.Sync.Channel`/`Socket`) and a separate **web app** (`ReplicantServerWeb.*`: LiveViews, layouts, assets, deployment). Web modules must only call public context APIs; library modules must never reference `ReplicantServerWeb` (the sole exception is `application.ex`, the composition root, until the split). See issue #4.
+
 ## Channel Topics
 
 - `sync:user:{user_id}` — per-user document sync (private docs)
 - `sync:public` — public document sync
 - `documents:*` — Phoenix PubSub topics for LiveView (separate from channel topics)
 
-`broadcast_from!` (in SyncChannel) excludes the sender socket. `Endpoint.broadcast` (in Documents context) reaches all channel subscribers. Both are needed: SyncChannel handles client-initiated changes, Documents context handles web UI changes.
+`broadcast_from!` (in `ReplicantServer.Sync.Channel`) excludes the sender socket. `Documents` broadcasts via `Phoenix.PubSub` (`%Phoenix.Socket.Broadcast{}` structs on `sync:*` topics) and reaches all channel subscribers. Both are needed: the sync channel handles client-initiated changes, the Documents context handles web UI changes.

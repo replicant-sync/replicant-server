@@ -1,4 +1,4 @@
-defmodule ReplicantServerWeb.SyncChannel do
+defmodule ReplicantServer.Sync.Channel do
   @moduledoc """
   Phoenix Channel for real-time document synchronization.
 

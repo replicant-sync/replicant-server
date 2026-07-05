@@ -20,6 +20,9 @@ config :replicant_server, ReplicantServerWeb.Endpoint,
   secret_key_base: "oD6r/Ez+1r8Dh1dGG7dZ8BQS3wcNOYQsXgrATKe1LCimCFRoO346xxuWJBbga1bE",
   server: false
 
+# Endpoint hosting the sync socket in channel tests (see ReplicantServer.Sync.ChannelCase)
+config :replicant_server, :sync_test_endpoint, ReplicantServerWeb.Endpoint
+
 # In test we don't send emails
 config :replicant_server, ReplicantServer.Mailer, adapter: Swoosh.Adapters.Test
 

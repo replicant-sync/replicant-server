@@ -1,5 +1,5 @@
-defmodule ReplicantServerWeb.SyncChannelTest do
-  use ReplicantServerWeb.ChannelCase
+defmodule ReplicantServer.Sync.ChannelTest do
+  use ReplicantServer.Sync.ChannelCase
 
   alias ReplicantServer.Auth
 
@@ -21,8 +21,8 @@ defmodule ReplicantServerWeb.SyncChannelTest do
 
   defp join_user_channel(context) do
     {:ok, _reply, socket} =
-      socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
-      |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:user:#{context.user_id}", %{
+      socket(ReplicantServer.Sync.Socket, "user_socket", %{})
+      |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{context.user_id}", %{
         "email" => context.email,
         "api_key" => context.credential.api_key,
         "signature" => context.signature,
@@ -41,8 +41,8 @@ defmodule ReplicantServerWeb.SyncChannelTest do
       signature: signature
     } do
       {:ok, reply, socket} =
-        socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
-        |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:user:#{user_id}", %{
+        socket(ReplicantServer.Sync.Socket, "user_socket", %{})
+        |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{user_id}", %{
           "email" => email,
           "api_key" => cred.api_key,
           "signature" => signature,
@@ -56,8 +56,8 @@ defmodule ReplicantServerWeb.SyncChannelTest do
 
     test "rejects invalid signature", %{credential: cred, email: email, user_id: user_id, timestamp: timestamp} do
       assert {:error, %{reason: "invalid_signature"}} =
-               socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
-               |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:user:#{user_id}", %{
+               socket(ReplicantServer.Sync.Socket, "user_socket", %{})
+               |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{user_id}", %{
                  "email" => email,
                  "api_key" => cred.api_key,
                  "signature" => "invalid_signature",
@@ -67,8 +67,8 @@ defmodule ReplicantServerWeb.SyncChannelTest do
 
     test "rejects missing params" do
       assert {:error, %{reason: "missing_params"}} =
-               socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
-               |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:public", %{})
+               socket(ReplicantServer.Sync.Socket, "user_socket", %{})
+               |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:public", %{})
     end
 
     test "rejects cleanly (no crash) when the email is taken under a different id", %{
@@ -89,8 +89,8 @@ defmodule ReplicantServerWeb.SyncChannelTest do
       signature = Auth.create_signature(cred.secret, timestamp, email, cred.api_key)
 
       assert {:error, %{reason: reason}} =
-               socket(ReplicantServerWeb.UserSocket, "user_socket", %{})
-               |> subscribe_and_join(ReplicantServerWeb.SyncChannel, "sync:user:#{real_id}", %{
+               socket(ReplicantServer.Sync.Socket, "user_socket", %{})
+               |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{real_id}", %{
                  "email" => email,
                  "api_key" => cred.api_key,
                  "signature" => signature,
@@ -228,7 +228,7 @@ defmodule ReplicantServerWeb.SyncChannelTest do
         |> Ecto.Changeset.change(visibility: "public")
         |> ReplicantServer.Repo.update()
 
-      ReplicantServerWeb.Endpoint.subscribe("sync:public")
+      Phoenix.PubSub.subscribe(ReplicantServer.PubSub, "sync:public")
       %{socket: socket, doc: doc}
     end
 
