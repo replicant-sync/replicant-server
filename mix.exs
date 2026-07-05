@@ -60,7 +60,7 @@ defmodule ReplicantServer.MixProject do
       {:phoenix_live_view, "~> 1.0"},
       {:phoenix_html, "~> 4.2"},
       {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
-      {:tailwind, "~> 0.2", runtime: Mix.env() == :dev},
+      {:tailwind, "~> 0.4", runtime: Mix.env() == :dev},
       {:heroicons,
        github: "tailwindlabs/heroicons",
        tag: "v2.1.1",

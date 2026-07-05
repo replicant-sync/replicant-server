@@ -51,10 +51,9 @@ config :esbuild,
 
 # Configure tailwind
 config :tailwind,
-  version: "3.4.3",
+  version: "4.1.7",
   replicant_server: [
     args: ~w(
-      --config=tailwind.config.js
       --input=css/app.css
       --output=../priv/static/assets/app.css
     ),

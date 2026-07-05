@@ -1,19 +1,14 @@
 # Dockerfile for Phoenix release
 # Based on https://hexdocs.pm/phoenix/releases.html
 
-# Debian-based images: the Tailwind v3 standalone binary requires glibc
-# (no musl/Alpine build is published for v3).
-# TODO: upgrade to Tailwind v4 (which ships musl binaries) so we can switch
-# back to Alpine images.
-ARG BUILDER_IMAGE="hexpm/elixir:1.19.4-erlang-27.3.4.9-debian-bookworm-20260610-slim"
-ARG RUNNER_IMAGE="debian:bookworm-20260610-slim"
+# Alpine requires Tailwind v4+ (v3 publishes no musl standalone binary)
+ARG BUILDER_IMAGE="hexpm/elixir:1.19.4-erlang-27.2.1-alpine-3.21.6"
+ARG RUNNER_IMAGE="alpine:3.21.6"
 
 FROM ${BUILDER_IMAGE} AS builder
 
 # Install build dependencies
-RUN apt-get update -y && \
-    apt-get install -y build-essential git nodejs npm && \
-    apt-get clean && rm -f /var/lib/apt/lists/*_*
+RUN apk add --no-cache build-base git nodejs npm
 
 # Prepare build dir
 WORKDIR /app
@@ -56,16 +51,7 @@ RUN mix release
 # Start a new build stage for the minimal runtime image
 FROM ${RUNNER_IMAGE}
 
-RUN apt-get update -y && \
-    apt-get install -y libstdc++6 openssl libncurses6 locales ca-certificates && \
-    apt-get clean && rm -f /var/lib/apt/lists/*_*
-
-# Set the locale
-RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
-
-ENV LANG=en_US.UTF-8
-ENV LANGUAGE=en_US:en
-ENV LC_ALL=en_US.UTF-8
+RUN apk add --no-cache libstdc++ openssl ncurses-libs ca-certificates
 
 WORKDIR "/app"
 RUN chown nobody /app
