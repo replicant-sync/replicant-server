@@ -31,6 +31,10 @@ replicant_server-*.tar
 # Node.js dependencies (installed at build time)
 /assets/node_modules/
 
+# Compiled assets (built via "mix assets.deploy" during Docker build)
+/priv/static/assets/
+/priv/static/cache_manifest.json
+
 # Kamal secrets and config (contains passwords/server details)
 .kamal/secrets
 config/deploy.yml
