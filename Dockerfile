@@ -2,7 +2,7 @@
 # Based on https://hexdocs.pm/phoenix/releases.html
 
 # Alpine requires Tailwind v4+ (v3 publishes no musl standalone binary)
-ARG BUILDER_IMAGE="hexpm/elixir:1.19.4-erlang-27.2.1-alpine-3.21.6"
+ARG BUILDER_IMAGE="hexpm/elixir:1.19.4-erlang-27.3.4.9-alpine-3.21.6"
 ARG RUNNER_IMAGE="alpine:3.21.6"
 
 FROM ${BUILDER_IMAGE} AS builder
