@@ -30,5 +30,8 @@ jobs:
           tags: |
             ghcr.io/replicant-sync/replicant-server:${{ github.sha }}
             ghcr.io/replicant-sync/replicant-server:latest
+          # Kamal refuses to deploy images without its service label
+          labels: |
+            service=replicant-server
           cache-from: type=gha
           cache-to: type=gha,mode=max
