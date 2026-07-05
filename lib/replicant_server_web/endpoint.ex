@@ -15,7 +15,7 @@ defmodule ReplicantServerWeb.Endpoint do
     websocket: [connect_info: [session: @session_options]],
     longpoll: [connect_info: [session: @session_options]]
 
-  socket "/socket", ReplicantServerWeb.UserSocket,
+  socket "/socket", ReplicantServer.Sync.Socket,
     websocket: [check_origin: false],
     longpoll: false
 
