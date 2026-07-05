@@ -1,4 +1,4 @@
-This is a web application written using the Phoenix web framework.
+This is a Phoenix application split into a document-sync **library** (`ReplicantServer.*`, including `ReplicantServer.Sync.Channel`/`Socket`) and a **web UI** (`ReplicantServerWeb.*`). Library modules must never reference `ReplicantServerWeb` (sole exception: `application.ex`); see the Library / Web Boundary section in CLAUDE.md.
 
 ## Project guidelines
 

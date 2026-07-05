@@ -1,5 +1,5 @@
 defmodule ReplicantServer.Sync.ChannelTest do
-  use ReplicantServerWeb.ChannelCase
+  use ReplicantServer.Sync.ChannelCase
 
   alias ReplicantServer.Auth
 
@@ -228,7 +228,7 @@ defmodule ReplicantServer.Sync.ChannelTest do
         |> Ecto.Changeset.change(visibility: "public")
         |> ReplicantServer.Repo.update()
 
-      ReplicantServerWeb.Endpoint.subscribe("sync:public")
+      Phoenix.PubSub.subscribe(ReplicantServer.PubSub, "sync:public")
       %{socket: socket, doc: doc}
     end
 
