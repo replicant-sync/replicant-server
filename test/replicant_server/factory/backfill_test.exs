@@ -16,9 +16,22 @@ defmodule ReplicantServer.Factory.BackfillTest do
   setup do
     dir = Path.join(System.tmp_dir!(), "factory_seed_#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
-    File.write!(Path.join(dir, "partch-43-tone.json"), ~s({"type":"tuning","title":"Partch 43-tone","author":"Robert Rich","pitches":["1","2"]}))
-    File.write!(Path.join(dir, "7-limit-hexany.json"), ~s({"type":"tuning","title":"7-limit Hexany","author":"","pitches":["1"]}))
-    File.write!(Path.join(dir, "12-tone-equal-temperament.json"), ~s({"type":"tuning","title":"12-TET","author":"","pitches":["1"]}))
+
+    File.write!(
+      Path.join(dir, "partch-43-tone.json"),
+      ~s({"type":"tuning","title":"Partch 43-tone","author":"Robert Rich","pitches":["1","2"]})
+    )
+
+    File.write!(
+      Path.join(dir, "7-limit-hexany.json"),
+      ~s({"type":"tuning","title":"7-limit Hexany","author":"","pitches":["1"]})
+    )
+
+    File.write!(
+      Path.join(dir, "12-tone-equal-temperament.json"),
+      ~s({"type":"tuning","title":"12-TET","author":"","pitches":["1"]})
+    )
+
     on_exit(fn -> File.rm_rf!(dir) end)
     %{dir: dir}
   end

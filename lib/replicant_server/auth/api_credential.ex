@@ -19,8 +19,12 @@ defmodule ReplicantServer.Auth.ApiCredential do
     |> cast(attrs, [:api_key, :secret, :name, :is_active])
     |> validate_required([:api_key, :secret, :name])
     |> unique_constraint(:api_key)
-    |> validate_format(:api_key, ~r/^rpa_[a-f0-9]{64}$/, message: "must be in format rpa_<64 hex chars>")
-    |> validate_format(:secret, ~r/^rps_[a-f0-9]{64}$/, message: "must be in format rps_<64 hex chars>")
+    |> validate_format(:api_key, ~r/^rpa_[a-f0-9]{64}$/,
+      message: "must be in format rpa_<64 hex chars>"
+    )
+    |> validate_format(:secret, ~r/^rps_[a-f0-9]{64}$/,
+      message: "must be in format rps_<64 hex chars>"
+    )
   end
 
   def touch_last_used_changeset(credential) do

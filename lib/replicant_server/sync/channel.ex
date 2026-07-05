@@ -65,7 +65,11 @@ defmodule ReplicantServer.Sync.Channel do
 
         {:reply,
          {:ok,
-          %{id: document.id, sync_revision: document.sync_revision, content_hash: document.content_hash}
+          %{
+            id: document.id,
+            sync_revision: document.sync_revision,
+            content_hash: document.content_hash
+          }
           |> Map.merge(Documents.envelope_fields(document))}, socket}
 
       {:error, :conflict, existing} ->

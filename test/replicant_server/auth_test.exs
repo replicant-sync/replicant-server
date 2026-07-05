@@ -6,7 +6,7 @@ defmodule ReplicantServer.AuthTest do
   describe "HMAC signature" do
     test "create_signature generates consistent signatures" do
       secret = "rps_test_secret"
-      timestamp = 1704067200
+      timestamp = 1_704_067_200
       email = "test@example.com"
       api_key = "rpa_test_key"
 
@@ -19,7 +19,7 @@ defmodule ReplicantServer.AuthTest do
 
     test "different inputs produce different signatures" do
       secret = "rps_test_secret"
-      timestamp = 1704067200
+      timestamp = 1_704_067_200
       email = "test@example.com"
       api_key = "rpa_test_key"
 

@@ -54,7 +54,12 @@ defmodule ReplicantServer.Sync.ChannelTest do
       assert socket.assigns.email == email
     end
 
-    test "rejects invalid signature", %{credential: cred, email: email, user_id: user_id, timestamp: timestamp} do
+    test "rejects invalid signature", %{
+      credential: cred,
+      email: email,
+      user_id: user_id,
+      timestamp: timestamp
+    } do
       assert {:error, %{reason: "invalid_signature"}} =
                socket(ReplicantServer.Sync.Socket, "user_socket", %{})
                |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{user_id}", %{
@@ -130,8 +135,20 @@ defmodule ReplicantServer.Sync.ChannelTest do
         })
 
       # test@example.com has no display_name -> email local part
-      assert_reply ref, :ok, %{id: ^doc_id, author_name: "test", visibility: "private", provenance: %{}}
-      assert_broadcast "document_created", %{id: ^doc_id, author_name: "test", visibility: "private", user_id: user_id}
+      assert_reply ref, :ok, %{
+        id: ^doc_id,
+        author_name: "test",
+        visibility: "private",
+        provenance: %{}
+      }
+
+      assert_broadcast "document_created", %{
+        id: ^doc_id,
+        author_name: "test",
+        visibility: "private",
+        user_id: user_id
+      }
+
       assert user_id != nil
     end
 
@@ -189,7 +206,11 @@ defmodule ReplicantServer.Sync.ChannelTest do
       %{socket: socket, doc_id: doc_id, content_hash: content_hash}
     end
 
-    test "updates document with valid content_hash", %{socket: socket, doc_id: doc_id, content_hash: content_hash} do
+    test "updates document with valid content_hash", %{
+      socket: socket,
+      doc_id: doc_id,
+      content_hash: content_hash
+    } do
       ref =
         push(socket, "update_document", %{
           "id" => doc_id,
@@ -232,7 +253,10 @@ defmodule ReplicantServer.Sync.ChannelTest do
       %{socket: socket, doc: doc}
     end
 
-    test "updating an owned public document broadcasts to sync:public", %{socket: socket, doc: doc} do
+    test "updating an owned public document broadcasts to sync:public", %{
+      socket: socket,
+      doc: doc
+    } do
       doc_id = doc.id
 
       ref =
@@ -243,16 +267,29 @@ defmodule ReplicantServer.Sync.ChannelTest do
         })
 
       assert_reply ref, :ok, _
-      assert_receive %Phoenix.Socket.Broadcast{topic: "sync:public", event: "document_updated", payload: %{id: ^doc_id}}
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        topic: "sync:public",
+        event: "document_updated",
+        payload: %{id: ^doc_id}
+      }
     end
 
-    test "deleting an owned public document broadcasts to sync:public", %{socket: socket, doc: doc} do
+    test "deleting an owned public document broadcasts to sync:public", %{
+      socket: socket,
+      doc: doc
+    } do
       doc_id = doc.id
 
       ref = push(socket, "delete_document", %{"id" => doc_id})
 
       assert_reply ref, :ok
-      assert_receive %Phoenix.Socket.Broadcast{topic: "sync:public", event: "document_deleted", payload: %{id: ^doc_id}}
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        topic: "sync:public",
+        event: "document_deleted",
+        payload: %{id: ^doc_id}
+      }
     end
 
     test "a private document does not broadcast to sync:public", %{socket: socket} do
@@ -333,7 +370,10 @@ defmodule ReplicantServer.Sync.ChannelTest do
 
     test "events carry the document's attribution", %{socket: socket} do
       doc_id = UUID.uuid4()
-      ref = push(socket, "create_document", %{"id" => doc_id, "content" => %{"title" => "Evented"}})
+
+      ref =
+        push(socket, "create_document", %{"id" => doc_id, "content" => %{"title" => "Evented"}})
+
       assert_reply ref, :ok, _
 
       ref = push(socket, "get_changes_since", %{"last_sequence" => 0})

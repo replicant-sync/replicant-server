@@ -4,7 +4,10 @@ defmodule ReplicantServer.Repo.Migrations.CreateChangeEvents do
   def change do
     create table(:change_events, primary_key: false) do
       add :sequence, :bigserial, primary_key: true
-      add :document_id, references(:documents, type: :binary_id, on_delete: :delete_all), null: false
+
+      add :document_id, references(:documents, type: :binary_id, on_delete: :delete_all),
+        null: false
+
       add :user_id, references(:users, type: :binary_id, on_delete: :delete_all), null: false
       add :event_type, :string, null: false
       add :forward_patch, :map

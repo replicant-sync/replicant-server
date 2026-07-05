@@ -29,7 +29,8 @@ defmodule ReplicantServer.Factory.Contributors do
         name = config.overrides[slug]
         fetch_contributor(config, name)
 
-      is_binary(author) and String.trim(author) != "" and Map.has_key?(config.contributors, author) ->
+      is_binary(author) and String.trim(author) != "" and
+          Map.has_key?(config.contributors, author) ->
         fetch_contributor(config, author)
 
       true ->

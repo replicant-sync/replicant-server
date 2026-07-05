@@ -25,7 +25,13 @@ defmodule ReplicantServer.DocumentsVisibilityTest do
 
   test "list_public_documents excludes private docs" do
     {:ok, user} = Accounts.get_or_create_user("owner@example.com")
-    {:ok, priv} = Documents.create_document(user.id, %{"id" => Ecto.UUID.generate(), "content" => %{"title" => "Private"}})
+
+    {:ok, priv} =
+      Documents.create_document(user.id, %{
+        "id" => Ecto.UUID.generate(),
+        "content" => %{"title" => "Private"}
+      })
+
     ids = Documents.list_public_documents() |> Enum.map(& &1.id)
     refute priv.id in ids
   end

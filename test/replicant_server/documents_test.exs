@@ -217,7 +217,9 @@ defmodule ReplicantServer.DocumentsTest do
       content = %{"title" => "Already There"}
 
       {:ok, original} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: content})
-      {:ok, _existing} = Documents.create_document(target.id, %{id: UUID.uuid4(), content: content})
+
+      {:ok, _existing} =
+        Documents.create_document(target.id, %{id: UUID.uuid4(), content: content})
 
       {:ok, result} = Documents.copy_document_to_user(original.id, user.id, target.id)
 
@@ -278,7 +280,10 @@ defmodule ReplicantServer.DocumentsTest do
       })
 
       assert {:ok, %{copied: 1, skipped: 0}} =
-               Documents.copy_all_documents_by_email("email-source@example.com", "email-target@example.com")
+               Documents.copy_all_documents_by_email(
+                 "email-source@example.com",
+                 "email-target@example.com"
+               )
 
       {:ok, target} = Accounts.get_or_create_user("email-target@example.com")
       assert Documents.list_user_documents(target.id) |> length() == 1

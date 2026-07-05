@@ -35,7 +35,12 @@ defmodule ReplicantServer.Factory.ContributorsTest do
   end
 
   test "load evaluates a config file" do
-    path = Path.join(System.tmp_dir!(), "factory_contributors_#{System.unique_integer([:positive])}.exs")
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "factory_contributors_#{System.unique_integer([:positive])}.exs"
+      )
+
     File.write!(path, inspect(@config, limit: :infinity))
     assert {:ok, loaded} = Contributors.load(path)
     assert loaded.system.display_name == "Entonal"
