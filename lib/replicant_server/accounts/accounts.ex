@@ -31,12 +31,23 @@ defmodule ReplicantServer.Accounts do
       {:ok, user} ->
         {:ok, user}
 
-      {:error, %Ecto.Changeset{}} ->
-        case get_user_by_email(normalized) do
-          nil -> {:error, :user_resolution_failed}
-          user -> {:ok, user}
+      {:error, %Ecto.Changeset{} = changeset} ->
+        if email_taken?(changeset) do
+          case get_user_by_email(normalized) do
+            nil -> {:error, :user_resolution_failed}
+            user -> {:ok, user}
+          end
+        else
+          {:error, changeset}
         end
     end
+  end
+
+  defp email_taken?(%Ecto.Changeset{errors: errors}) do
+    Enum.any?(errors, fn
+      {:email, {_msg, opts}} -> opts[:constraint] == :unique
+      _ -> false
+    end)
   end
 
   @doc """
