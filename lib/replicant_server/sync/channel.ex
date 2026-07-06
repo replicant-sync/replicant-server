@@ -12,20 +12,21 @@ defmodule ReplicantServer.Sync.Channel do
   require Logger
 
   @impl true
-  def join("sync:" <> _topic, params, socket) do
+  def join("sync:" <> _rest = topic, params, socket) do
     with {:ok, email} <- Map.fetch(params, "email"),
          {:ok, api_key} <- Map.fetch(params, "api_key"),
          {:ok, signature} <- Map.fetch(params, "signature"),
          {:ok, timestamp} <- Map.fetch(params, "timestamp"),
          {:ok, _credential} <- Auth.verify_hmac(api_key, signature, timestamp, email),
-         {:ok, user} <- Accounts.get_or_create_user(email) do
+         {:ok, user, mode} <- resolve_user(params, email),
+         :ok <- validate_topic(topic, user, mode) do
       socket =
         socket
         |> assign(:user_id, user.id)
-        |> assign(:email, email)
+        |> assign(:email, user.email)
 
-      Logger.info("User #{email} joined sync channel")
-      {:ok, %{user_id: user.id}, socket}
+      Logger.info("User #{user.email} joined sync channel")
+      {:ok, %{user_id: user.id, email: user.email}, socket}
     else
       :error ->
         {:error, %{reason: "missing_params"}}
@@ -35,10 +36,40 @@ defmodule ReplicantServer.Sync.Channel do
         {:error, %{reason: "user_resolution_failed"}}
 
       {:error, reason} ->
-        Logger.warning("Auth failed: #{inspect(reason)}")
+        Logger.warning("Join rejected: #{inspect(reason)}")
         {:error, %{reason: to_string(reason)}}
     end
   end
+
+  # A payload user_id (steady-state join) wins; an unknown or absent one falls
+  # back to email resolution (bootstrap join, or self-healing after the server
+  # database was reset).
+  defp resolve_user(%{"user_id" => user_id}, email) when is_binary(user_id) do
+    with {:ok, _uuid} <- Ecto.UUID.cast(user_id),
+         %Accounts.User{} = user <- Accounts.get_user(user_id) do
+      {:ok, user, :by_id}
+    else
+      _ -> bootstrap_resolve(email)
+    end
+  end
+
+  defp resolve_user(_params, email), do: bootstrap_resolve(email)
+
+  defp bootstrap_resolve(email) do
+    case Accounts.get_or_create_user(email) do
+      {:ok, user} -> {:ok, user, :bootstrap}
+      error -> error
+    end
+  end
+
+  # A steady-state join must sit on its own topic. A bootstrap join may sit on
+  # a provisional topic: the client adopts the returned canonical id, then
+  # rejoins the canonical topic.
+  defp validate_topic("sync:user:" <> topic_id, user, :by_id) do
+    if topic_id == user.id, do: :ok, else: {:error, :topic_user_mismatch}
+  end
+
+  defp validate_topic(_topic, _user, _mode), do: :ok
 
   # ============================================================================
   # Create Document
