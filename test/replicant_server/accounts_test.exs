@@ -90,4 +90,17 @@ defmodule ReplicantServer.AccountsTest do
 
     assert {"has already been taken", _} = changeset.errors[:username]
   end
+
+  test "create_user surfaces the email unique constraint (race-retry relies on this shape)" do
+    {:ok, _first} = Accounts.create_user("dup@example.com")
+    {:error, changeset} = Accounts.create_user("dup@example.com")
+    assert {_msg, opts} = changeset.errors[:email]
+    assert opts[:constraint] == :unique
+  end
+
+  test "a non-unique changeset error is not the email-unique constraint (race-retry propagates it)" do
+    {:error, changeset} = Accounts.create_user("")
+    {_msg, opts} = changeset.errors[:email]
+    refute opts[:constraint] == :unique
+  end
 end
