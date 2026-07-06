@@ -29,6 +29,47 @@ defmodule ReplicantServer.AuthTest do
     end
   end
 
+  describe "claim_enrollment/2" do
+    setup do
+      {:ok, token} = Auth.request_enrollment("carol@example.com")
+      %{token: token}
+    end
+
+    test "exchanges a valid token for a per-user credential", %{token: token} do
+      {:ok, creds} = Auth.claim_enrollment("carol@example.com", token)
+
+      assert creds.api_key =~ ~r/^rpa_[a-f0-9]{64}$/
+      assert creds.secret =~ ~r/^rps_[a-f0-9]{64}$/
+
+      credential = Repo.get_by(ApiCredential, api_key: creds.api_key)
+      user = ReplicantServer.Accounts.get_user_by_email("carol@example.com")
+      assert credential.user_id == user.id
+
+      assert Repo.one(EnrollmentToken).used_at != nil
+    end
+
+    test "rejects a token that was already claimed", %{token: token} do
+      {:ok, _} = Auth.claim_enrollment("carol@example.com", token)
+      assert {:error, :invalid_token} = Auth.claim_enrollment("carol@example.com", token)
+    end
+
+    test "rejects a wrong/unknown token" do
+      assert {:error, :invalid_token} = Auth.claim_enrollment("carol@example.com", "NOTAREALTOKEN")
+    end
+
+    test "rejects when the email does not match the token's user", %{token: token} do
+      assert {:error, :invalid_token} = Auth.claim_enrollment("mallory@example.com", token)
+    end
+
+    test "rejects an expired token", %{token: token} do
+      Repo.update_all(EnrollmentToken,
+        set: [expires_at: DateTime.add(DateTime.utc_now(), -60, :second)]
+      )
+
+      assert {:error, :invalid_token} = Auth.claim_enrollment("carol@example.com", token)
+    end
+  end
+
   describe "HMAC signature" do
     test "create_signature generates consistent signatures" do
       secret = "rps_test_secret"

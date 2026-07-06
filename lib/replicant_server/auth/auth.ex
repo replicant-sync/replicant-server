@@ -86,6 +86,30 @@ defmodule ReplicantServer.Auth do
   end
 
   @doc """
+  Exchanges a valid, unused, unexpired enrollment token (bound to `email`'s user)
+  for a freshly minted per-user API credential. Marks the token used atomically.
+  Returns `{:error, :invalid_token}` on any failure (no distinguishing detail).
+  """
+  def claim_enrollment(email, token) do
+    normalized = normalize_email(email)
+    hash = hash_token(token)
+    now = DateTime.utc_now()
+
+    query =
+      from t in EnrollmentToken,
+        where: t.token_hash == ^hash and is_nil(t.used_at) and t.expires_at > ^now,
+        preload: [:user]
+
+    case Repo.one(query) do
+      %EnrollmentToken{user: %{email: ^normalized} = user} = enrollment ->
+        claim_token(enrollment, user)
+
+      _ ->
+        {:error, :invalid_token}
+    end
+  end
+
+  @doc """
   Normalizes an email for storage and lookup: trim surrounding whitespace,
   then Unicode-downcase. Deliberately does NOT do provider-specific alias
   canonicalization (e.g. Gmail dots).
@@ -103,6 +127,31 @@ defmodule ReplicantServer.Auth do
 
   defp hash_token(token) do
     :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
+  end
+
+  defp claim_token(enrollment, user) do
+    now = DateTime.utc_now()
+
+    {count, _} =
+      Repo.update_all(
+        from(t in EnrollmentToken, where: t.id == ^enrollment.id and is_nil(t.used_at)),
+        set: [used_at: now, updated_at: now]
+      )
+
+    case count do
+      1 -> mint_credential(user)
+      0 -> {:error, :invalid_token}
+    end
+  end
+
+  defp mint_credential(user) do
+    creds = generate_credentials()
+    attrs = Map.merge(creds, %{name: "device:#{user.email}", user_id: user.id})
+
+    case %ApiCredential{} |> ApiCredential.changeset(attrs) |> Repo.insert() do
+      {:ok, _credential} -> {:ok, creds}
+      {:error, changeset} -> {:error, changeset}
+    end
   end
 
   defp verify_timestamp(timestamp) when is_integer(timestamp) do
