@@ -19,18 +19,47 @@ defmodule ReplicantServer.AccountsTest do
     assert Accounts.get_user_by_email("  Dana@Example.com ").id == user.id
   end
 
-  test "upsert_user mints the frozen id and sets display_name" do
-    {:ok, user} = Accounts.upsert_user("rr@robertrich.com", "Robert Rich")
-    assert user.id == "26e545b7-b039-5de9-8f38-f302fd9da444"
-    assert user.email == "rr@robertrich.com"
-    assert user.display_name == "Robert Rich"
+  test "get_or_create_user autogenerates distinct ids per email" do
+    {:ok, a} = Accounts.get_or_create_user("a@example.com")
+    {:ok, b} = Accounts.get_or_create_user("b@example.com")
+    assert a.id != b.id
+    assert {:ok, _} = Ecto.UUID.cast(a.id)
   end
 
-  test "upsert_user is idempotent and updates the display_name in place" do
+  test "get_or_create_user finds an existing row regardless of its id" do
+    # Legacy rows keep arbitrary (formerly derived) ids; email is the lookup key.
+    legacy_id = Ecto.UUID.generate()
+
+    {:ok, _legacy} =
+      ReplicantServer.Repo.insert(%ReplicantServer.Accounts.User{
+        id: legacy_id,
+        email: "legacy@example.com"
+      })
+
+    {:ok, user} = Accounts.get_or_create_user("  Legacy@Example.COM ")
+    assert user.id == legacy_id
+  end
+
+  test "update_user_email changes the email and keeps the id" do
+    {:ok, user} = Accounts.get_or_create_user("before@example.com")
+    {:ok, updated} = Accounts.update_user_email(user, "  After@Example.COM ")
+    assert updated.id == user.id
+    assert updated.email == "after@example.com"
+    assert Accounts.get_user_by_email("after@example.com").id == user.id
+    assert Accounts.get_user_by_email("before@example.com") == nil
+  end
+
+  test "update_user_email rejects a taken email" do
+    {:ok, _other} = Accounts.get_or_create_user("taken@example.com")
+    {:ok, user} = Accounts.get_or_create_user("mine@example.com")
+    assert {:error, %Ecto.Changeset{}} = Accounts.update_user_email(user, "taken@example.com")
+  end
+
+  test "upsert_user is idempotent by email and updates display_name in place" do
     {:ok, a} = Accounts.upsert_user("  Sean@Sevish.com ", "Sevish")
     {:ok, b} = Accounts.upsert_user("sean@sevish.com", "Sevish (updated)")
     assert a.id == b.id
-    assert b.id == "38795f16-1bf4-5a61-bbd1-df366c140494"
+    assert b.email == "sean@sevish.com"
     assert b.display_name == "Sevish (updated)"
   end
 
