@@ -7,11 +7,14 @@ defmodule ReplicantServer.Auth do
 
   import Ecto.Query
   alias ReplicantServer.Repo
-  alias ReplicantServer.Auth.ApiCredential
+  alias ReplicantServer.Accounts
+  alias ReplicantServer.Auth.{ApiCredential, EnrollmentToken}
 
   @hmac_window_seconds 300
   @api_key_prefix "rpa_"
   @secret_prefix "rps_"
+  @enrollment_token_bytes 8
+  @enrollment_ttl_seconds 900
 
   @doc """
   Verifies an HMAC signature for API authentication.
@@ -59,6 +62,30 @@ defmodule ReplicantServer.Auth do
   end
 
   @doc """
+  Mints a one-time enrollment token for `email`, creating the user if needed.
+  Stores only the token's hash; returns the plaintext token for delivery.
+  Always succeeds for a well-formed email (no account enumeration).
+  """
+  def request_enrollment(email) do
+    normalized = normalize_email(email)
+
+    with {:ok, user} <- Accounts.get_or_create_user(normalized) do
+      token = generate_enrollment_token()
+
+      attrs = %{
+        user_id: user.id,
+        token_hash: hash_token(token),
+        expires_at: DateTime.add(DateTime.utc_now(), @enrollment_ttl_seconds, :second)
+      }
+
+      case %EnrollmentToken{} |> EnrollmentToken.changeset(attrs) |> Repo.insert() do
+        {:ok, _} -> {:ok, token}
+        {:error, changeset} -> {:error, changeset}
+      end
+    end
+  end
+
+  @doc """
   Normalizes an email for storage and lookup: trim surrounding whitespace,
   then Unicode-downcase. Deliberately does NOT do provider-specific alias
   canonicalization (e.g. Gmail dots).
@@ -68,6 +95,15 @@ defmodule ReplicantServer.Auth do
   end
 
   # Private functions
+
+  defp generate_enrollment_token do
+    :crypto.strong_rand_bytes(@enrollment_token_bytes)
+    |> Base.encode32(padding: false, case: :upper)
+  end
+
+  defp hash_token(token) do
+    :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
+  end
 
   defp verify_timestamp(timestamp) when is_integer(timestamp) do
     now = System.system_time(:second)

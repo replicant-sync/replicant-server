@@ -2,6 +2,32 @@ defmodule ReplicantServer.AuthTest do
   use ReplicantServer.DataCase
 
   alias ReplicantServer.Auth
+  alias ReplicantServer.Auth.{ApiCredential, EnrollmentToken}
+  alias ReplicantServer.Repo
+
+  describe "request_enrollment/1" do
+    test "mints a single-use token, stores only its hash, and returns the plaintext" do
+      {:ok, token} = Auth.request_enrollment("Alice@Example.com")
+
+      assert is_binary(token) and byte_size(token) >= 10
+
+      stored = Repo.one(EnrollmentToken)
+      refute stored.token_hash == token
+      assert stored.token_hash == :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
+      assert is_nil(stored.used_at)
+      assert DateTime.compare(stored.expires_at, DateTime.utc_now()) == :gt
+
+      user = ReplicantServer.Accounts.get_user(stored.user_id)
+      assert user.email == "alice@example.com"
+    end
+
+    test "reuses the existing user for a known email" do
+      {:ok, user} = ReplicantServer.Accounts.get_or_create_user("bob@example.com")
+      {:ok, _token} = Auth.request_enrollment("bob@example.com")
+
+      assert Repo.one(EnrollmentToken).user_id == user.id
+    end
+  end
 
   describe "HMAC signature" do
     test "create_signature generates consistent signatures" do
