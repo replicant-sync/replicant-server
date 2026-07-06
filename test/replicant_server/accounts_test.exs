@@ -33,4 +33,32 @@ defmodule ReplicantServer.AccountsTest do
     assert b.id == "38795f16-1bf4-5a61-bbd1-df366c140494"
     assert b.display_name == "Sevish (updated)"
   end
+
+  test "changeset is valid without an id and insert autogenerates one" do
+    changeset =
+      ReplicantServer.Accounts.User.changeset(%ReplicantServer.Accounts.User{}, %{
+        email: "auto@example.com"
+      })
+
+    assert changeset.valid?
+
+    {:ok, user} = ReplicantServer.Repo.insert(changeset)
+    assert {:ok, _} = Ecto.UUID.cast(user.id)
+  end
+
+  test "changeset accepts an optional unique username" do
+    {:ok, a} =
+      %ReplicantServer.Accounts.User{}
+      |> ReplicantServer.Accounts.User.changeset(%{email: "u1@example.com", username: "u1"})
+      |> ReplicantServer.Repo.insert()
+
+    assert a.username == "u1"
+
+    {:error, changeset} =
+      %ReplicantServer.Accounts.User{}
+      |> ReplicantServer.Accounts.User.changeset(%{email: "u2@example.com", username: "u1"})
+      |> ReplicantServer.Repo.insert()
+
+    assert {"has already been taken", _} = changeset.errors[:username]
+  end
 end
