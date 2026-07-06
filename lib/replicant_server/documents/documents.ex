@@ -336,13 +336,14 @@ defmodule ReplicantServer.Documents do
       {:ok, %{copied: 42, skipped: 0}}
   """
   def copy_all_documents_by_email(source_email, target_email) do
-    source_id = ReplicantServer.Auth.deterministic_user_id(source_email)
-    target_id = ReplicantServer.Auth.deterministic_user_id(target_email)
-
-    # Ensure target user exists
-    ReplicantServer.Accounts.get_or_create_user(target_email)
-
-    copy_all_documents(source_id, target_id)
+    with %ReplicantServer.Accounts.User{} = source <-
+           ReplicantServer.Accounts.get_user_by_email(source_email),
+         {:ok, target} <- ReplicantServer.Accounts.get_or_create_user(target_email) do
+      copy_all_documents(source.id, target.id)
+    else
+      nil -> {:error, :source_not_found}
+      error -> error
+    end
   end
 
   # --- Public documents (user_id IS NULL) ---

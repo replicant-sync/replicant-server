@@ -9,15 +9,14 @@ defmodule ReplicantServer.DocumentsBroadcastTest do
   """
   use ReplicantServer.DataCase
 
-  alias ReplicantServer.{Auth, Accounts, Documents}
+  alias ReplicantServer.{Accounts, Documents}
 
   @endpoint ReplicantServer.Sync.TestEndpoint
 
   setup do
     email = "broadcast-test@example.com"
-    user_id = Auth.deterministic_user_id(email)
-    {:ok, _user} = Accounts.get_or_create_user(email)
-    %{user_id: user_id, email: email}
+    {:ok, user} = Accounts.get_or_create_user(email)
+    %{user_id: user.id, email: email}
   end
 
   describe "replace_content broadcasts to sync channels" do

@@ -30,42 +30,6 @@ defmodule ReplicantServer.AuthTest do
     end
   end
 
-  describe "deterministic_user_id" do
-    test "generates consistent UUIDs for same email" do
-      email = "test@example.com"
-
-      id1 = Auth.deterministic_user_id(email)
-      id2 = Auth.deterministic_user_id(email)
-
-      assert id1 == id2
-      assert String.length(id1) == 36
-    end
-
-    test "generates different UUIDs for different emails" do
-      id1 = Auth.deterministic_user_id("alice@example.com")
-      id2 = Auth.deterministic_user_id("bob@example.com")
-
-      assert id1 != id2
-    end
-
-    test "derives the frozen golden vectors for namespace com.nodeaudio.entonal" do
-      assert Auth.deterministic_user_id("test@example.com") ==
-               "71b2b712-7878-56ee-8323-43809b8198a5"
-
-      assert Auth.deterministic_user_id("alice@example.com") ==
-               "af665bed-e8e7-5b1f-ba4f-9343fefde4bb"
-
-      assert Auth.deterministic_user_id("bob@example.com") ==
-               "22025cd4-e01b-560e-8004-8614ef9bd52e"
-    end
-
-    test "case and surrounding whitespace do not change the derived id" do
-      base = Auth.deterministic_user_id("alice@example.com")
-      assert Auth.deterministic_user_id("  Alice@Example.COM  ") == base
-      assert Auth.deterministic_user_id("ALICE@EXAMPLE.COM") == base
-    end
-  end
-
   describe "generate_credentials" do
     test "generates valid credential format" do
       creds = Auth.generate_credentials()
