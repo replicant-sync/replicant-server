@@ -6,7 +6,7 @@ defmodule ReplicantServer.Sync.Channel do
   """
   use Phoenix.Channel
 
-  alias ReplicantServer.{Auth, Accounts, Documents}
+  alias ReplicantServer.{Auth, Documents}
   alias ReplicantServer.OT.Transform
 
   require Logger
@@ -17,23 +17,15 @@ defmodule ReplicantServer.Sync.Channel do
          {:ok, api_key} <- Map.fetch(params, "api_key"),
          {:ok, signature} <- Map.fetch(params, "signature"),
          {:ok, timestamp} <- Map.fetch(params, "timestamp"),
-         {:ok, _credential} <- Auth.verify_hmac(api_key, signature, timestamp, email),
-         {:ok, user, mode} <- resolve_user(params, email),
-         :ok <- validate_topic(topic, user, mode) do
-      socket =
-        socket
-        |> assign(:user_id, user.id)
-        |> assign(:email, user.email)
+         {:ok, credential} <- Auth.verify_hmac(api_key, signature, timestamp, email),
+         :ok <- validate_topic(topic, credential.user_id) do
+      socket = assign(socket, :user_id, credential.user_id)
 
-      Logger.info("User #{user.email} joined sync channel")
-      {:ok, %{user_id: user.id, email: user.email}, socket}
+      Logger.info("Credential #{credential.id} joined #{topic}")
+      {:ok, %{user_id: credential.user_id}, socket}
     else
       :error ->
         {:error, %{reason: "missing_params"}}
-
-      {:error, %Ecto.Changeset{} = changeset} ->
-        Logger.warning("User resolution failed on join: #{inspect(changeset.errors)}")
-        {:error, %{reason: "user_resolution_failed"}}
 
       {:error, reason} ->
         Logger.warning("Join rejected: #{inspect(reason)}")
@@ -41,35 +33,18 @@ defmodule ReplicantServer.Sync.Channel do
     end
   end
 
-  # A payload user_id (steady-state join) wins; an unknown or absent one falls
-  # back to email resolution (bootstrap join, or self-healing after the server
-  # database was reset).
-  defp resolve_user(%{"user_id" => user_id}, email) when is_binary(user_id) do
-    with {:ok, _uuid} <- Ecto.UUID.cast(user_id),
-         %Accounts.User{} = user <- Accounts.get_user(user_id) do
-      {:ok, user, :by_id}
-    else
-      _ -> bootstrap_resolve(email)
+  # Identity comes from the authenticated credential's user_id. A credential
+  # with no user_id (the retired shared secret) cannot resolve identity.
+  defp validate_topic("sync:user:" <> topic_id, user_id) do
+    cond do
+      is_nil(user_id) -> {:error, :credential_not_enrolled}
+      topic_id == user_id -> :ok
+      true -> {:error, :topic_user_mismatch}
     end
   end
 
-  defp resolve_user(_params, email), do: bootstrap_resolve(email)
-
-  defp bootstrap_resolve(email) do
-    case Accounts.get_or_create_user(email) do
-      {:ok, user} -> {:ok, user, :bootstrap}
-      error -> error
-    end
-  end
-
-  # A steady-state join must sit on its own topic. A bootstrap join may sit on
-  # a provisional topic: the client adopts the returned canonical id, then
-  # rejoins the canonical topic.
-  defp validate_topic("sync:user:" <> topic_id, user, :by_id) do
-    if topic_id == user.id, do: :ok, else: {:error, :topic_user_mismatch}
-  end
-
-  defp validate_topic(_topic, _user, _mode), do: :ok
+  defp validate_topic("sync:public", _user_id), do: :ok
+  defp validate_topic(_topic, _user_id), do: {:error, :invalid_topic}
 
   # ============================================================================
   # Create Document

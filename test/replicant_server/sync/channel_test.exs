@@ -4,9 +4,9 @@ defmodule ReplicantServer.Sync.ChannelTest do
   alias ReplicantServer.Auth
 
   setup do
-    {:ok, credential} = Auth.create_credential("Test App")
     email = "test@example.com"
     {:ok, user} = ReplicantServer.Accounts.get_or_create_user(email)
+    {:ok, credential} = mint_credential_for(user)
     timestamp = System.system_time(:second)
     signature = Auth.create_signature(credential.secret, timestamp, email, credential.api_key)
 
@@ -17,6 +17,16 @@ defmodule ReplicantServer.Sync.ChannelTest do
       timestamp: timestamp,
       signature: signature
     }
+  end
+
+  defp mint_credential_for(user) do
+    creds = Auth.generate_credentials()
+
+    %ReplicantServer.Auth.ApiCredential{}
+    |> ReplicantServer.Auth.ApiCredential.changeset(
+      Map.merge(creds, %{name: "test-device", user_id: user.id})
+    )
+    |> ReplicantServer.Repo.insert()
   end
 
   defp join_user_channel(context) do
@@ -49,9 +59,8 @@ defmodule ReplicantServer.Sync.ChannelTest do
           "timestamp" => timestamp
         })
 
-      assert reply.user_id != nil
-      assert socket.assigns.user_id != nil
-      assert socket.assigns.email == email
+      assert reply.user_id == user_id
+      assert socket.assigns.user_id == user_id
     end
 
     test "rejects invalid signature", %{
@@ -76,53 +85,9 @@ defmodule ReplicantServer.Sync.ChannelTest do
                |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:public", %{})
     end
 
-    test "bootstrap join on a provisional topic returns the canonical id and email", %{
-      credential: cred,
-      timestamp: timestamp
-    } do
-      email = "fresh@example.com"
-      provisional_id = Ecto.UUID.generate()
-      signature = Auth.create_signature(cred.secret, timestamp, email, cred.api_key)
-
-      {:ok, reply, _socket} =
-        socket(ReplicantServer.Sync.Socket, "user_socket", %{})
-        |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{provisional_id}", %{
-          "email" => email,
-          "api_key" => cred.api_key,
-          "signature" => signature,
-          "timestamp" => timestamp
-        })
-
-      assert reply.user_id != provisional_id
-      assert reply.email == "fresh@example.com"
-      assert ReplicantServer.Accounts.get_user(reply.user_id).email == "fresh@example.com"
-    end
-
-    test "steady-state join resolves by user_id and validates the topic", %{
+    test "join on another user's topic is rejected", %{
       credential: cred,
       email: email,
-      user_id: user_id,
-      timestamp: timestamp,
-      signature: signature
-    } do
-      {:ok, reply, _socket} =
-        socket(ReplicantServer.Sync.Socket, "user_socket", %{})
-        |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{user_id}", %{
-          "email" => email,
-          "user_id" => user_id,
-          "api_key" => cred.api_key,
-          "signature" => signature,
-          "timestamp" => timestamp
-        })
-
-      assert reply.user_id == user_id
-      assert reply.email == email
-    end
-
-    test "steady-state join on the wrong topic is rejected", %{
-      credential: cred,
-      email: email,
-      user_id: user_id,
       timestamp: timestamp,
       signature: signature
     } do
@@ -133,7 +98,6 @@ defmodule ReplicantServer.Sync.ChannelTest do
                  "sync:user:#{Ecto.UUID.generate()}",
                  %{
                    "email" => email,
-                   "user_id" => user_id,
                    "api_key" => cred.api_key,
                    "signature" => signature,
                    "timestamp" => timestamp
@@ -141,27 +105,23 @@ defmodule ReplicantServer.Sync.ChannelTest do
                )
     end
 
-    test "unknown user_id falls back to email resolution", %{
-      credential: cred,
-      email: email,
-      user_id: user_id,
-      timestamp: timestamp,
-      signature: signature
-    } do
-      stale_id = Ecto.UUID.generate()
+    test "a credential with no user_id cannot resolve identity", %{timestamp: timestamp} do
+      {:ok, legacy} = Auth.create_credential("legacy-shared")
+      email = "anyone@example.com"
+      signature = Auth.create_signature(legacy.secret, timestamp, email, legacy.api_key)
 
-      {:ok, reply, _socket} =
-        socket(ReplicantServer.Sync.Socket, "user_socket", %{})
-        |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{stale_id}", %{
-          "email" => email,
-          "user_id" => stale_id,
-          "api_key" => cred.api_key,
-          "signature" => signature,
-          "timestamp" => timestamp
-        })
-
-      assert reply.user_id == user_id
-      assert reply.email == email
+      assert {:error, %{reason: "credential_not_enrolled"}} =
+               socket(ReplicantServer.Sync.Socket, "user_socket", %{})
+               |> subscribe_and_join(
+                 ReplicantServer.Sync.Channel,
+                 "sync:user:#{Ecto.UUID.generate()}",
+                 %{
+                   "email" => email,
+                   "api_key" => legacy.api_key,
+                   "signature" => signature,
+                   "timestamp" => timestamp
+                 }
+               )
     end
   end
 
