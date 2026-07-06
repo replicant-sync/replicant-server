@@ -54,7 +54,8 @@ defmodule ReplicantServer.AuthTest do
     end
 
     test "rejects a wrong/unknown token" do
-      assert {:error, :invalid_token} = Auth.claim_enrollment("carol@example.com", "NOTAREALTOKEN")
+      assert {:error, :invalid_token} =
+               Auth.claim_enrollment("carol@example.com", "NOTAREALTOKEN")
     end
 
     test "rejects when the email does not match the token's user", %{token: token} do
