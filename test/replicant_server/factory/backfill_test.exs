@@ -1,6 +1,7 @@
 defmodule ReplicantServer.Factory.BackfillTest do
   use ReplicantServer.DataCase
 
+  alias ReplicantServer.Accounts
   alias ReplicantServer.Documents
   alias ReplicantServer.Factory.Backfill
 
@@ -16,9 +17,22 @@ defmodule ReplicantServer.Factory.BackfillTest do
   setup do
     dir = Path.join(System.tmp_dir!(), "factory_seed_#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
-    File.write!(Path.join(dir, "partch-43-tone.json"), ~s({"type":"tuning","title":"Partch 43-tone","author":"Robert Rich","pitches":["1","2"]}))
-    File.write!(Path.join(dir, "7-limit-hexany.json"), ~s({"type":"tuning","title":"7-limit Hexany","author":"","pitches":["1"]}))
-    File.write!(Path.join(dir, "12-tone-equal-temperament.json"), ~s({"type":"tuning","title":"12-TET","author":"","pitches":["1"]}))
+
+    File.write!(
+      Path.join(dir, "partch-43-tone.json"),
+      ~s({"type":"tuning","title":"Partch 43-tone","author":"Robert Rich","pitches":["1","2"]})
+    )
+
+    File.write!(
+      Path.join(dir, "7-limit-hexany.json"),
+      ~s({"type":"tuning","title":"7-limit Hexany","author":"","pitches":["1"]})
+    )
+
+    File.write!(
+      Path.join(dir, "12-tone-equal-temperament.json"),
+      ~s({"type":"tuning","title":"12-TET","author":"","pitches":["1"]})
+    )
+
     on_exit(fn -> File.rm_rf!(dir) end)
     %{dir: dir}
   end
@@ -29,17 +43,21 @@ defmodule ReplicantServer.Factory.BackfillTest do
     pubs = Documents.list_public_documents()
     by_title = Map.new(pubs, &{&1.content["title"], &1})
 
+    robert_rich = Accounts.get_user_by_email("rr@robertrich.com")
+    sevish = Accounts.get_user_by_email("sean@sevish.com")
+    entonal = Accounts.get_user_by_email("factory@nodeaudio.com")
+
     partch = by_title["Partch 43-tone"]
-    assert partch.user_id == "26e545b7-b039-5de9-8f38-f302fd9da444"
+    assert partch.user_id == robert_rich.id
     assert partch.author_name == "Robert Rich"
     assert partch.visibility == "public"
 
     hexany = by_title["7-limit Hexany"]
-    assert hexany.user_id == "38795f16-1bf4-5a61-bbd1-df366c140494"
+    assert hexany.user_id == sevish.id
     assert hexany.author_name == "Sevish"
 
     tet = by_title["12-TET"]
-    assert tet.user_id == "07895606-f8f5-5407-80c8-525bb48539ef"
+    assert tet.user_id == entonal.id
     assert tet.author_name == "Entonal"
   end
 
@@ -55,5 +73,15 @@ defmodule ReplicantServer.Factory.BackfillTest do
     assert {:ok, %{created: 3}} = Backfill.run(dir, @config)
     assert {:ok, %{created: 0, updated: 3}} = Backfill.run(dir, @config)
     assert length(Documents.list_public_documents()) == 3
+  end
+
+  test "deterministic_doc_id reproduces the historical per-slug derivation" do
+    expected =
+      UUID.uuid5(
+        UUID.uuid5(:dns, "com.nodeaudio.entonal"),
+        "com.nodeaudio.entonal/factory-tuning/some-slug"
+      )
+
+    assert ReplicantServer.Factory.Backfill.deterministic_doc_id("Some-Slug") == expected
   end
 end

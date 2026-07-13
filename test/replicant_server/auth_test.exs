@@ -2,11 +2,79 @@ defmodule ReplicantServer.AuthTest do
   use ReplicantServer.DataCase
 
   alias ReplicantServer.Auth
+  alias ReplicantServer.Auth.{ApiCredential, EnrollmentToken}
+  alias ReplicantServer.Repo
+
+  describe "request_enrollment/1" do
+    test "mints a single-use token, stores only its hash, and returns the plaintext" do
+      {:ok, token} = Auth.request_enrollment("Alice@Example.com")
+
+      assert is_binary(token) and byte_size(token) >= 10
+
+      stored = Repo.one(EnrollmentToken)
+      refute stored.token_hash == token
+      assert stored.token_hash == :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
+      assert is_nil(stored.used_at)
+      assert DateTime.compare(stored.expires_at, DateTime.utc_now()) == :gt
+
+      user = ReplicantServer.Accounts.get_user(stored.user_id)
+      assert user.email == "alice@example.com"
+    end
+
+    test "reuses the existing user for a known email" do
+      {:ok, user} = ReplicantServer.Accounts.get_or_create_user("bob@example.com")
+      {:ok, _token} = Auth.request_enrollment("bob@example.com")
+
+      assert Repo.one(EnrollmentToken).user_id == user.id
+    end
+  end
+
+  describe "claim_enrollment/2" do
+    setup do
+      {:ok, token} = Auth.request_enrollment("carol@example.com")
+      %{token: token}
+    end
+
+    test "exchanges a valid token for a per-user credential", %{token: token} do
+      {:ok, creds} = Auth.claim_enrollment("carol@example.com", token)
+
+      assert creds.api_key =~ ~r/^rpa_[a-f0-9]{64}$/
+      assert creds.secret =~ ~r/^rps_[a-f0-9]{64}$/
+
+      credential = Repo.get_by(ApiCredential, api_key: creds.api_key)
+      user = ReplicantServer.Accounts.get_user_by_email("carol@example.com")
+      assert credential.user_id == user.id
+
+      assert Repo.one(EnrollmentToken).used_at != nil
+    end
+
+    test "rejects a token that was already claimed", %{token: token} do
+      {:ok, _} = Auth.claim_enrollment("carol@example.com", token)
+      assert {:error, :invalid_token} = Auth.claim_enrollment("carol@example.com", token)
+    end
+
+    test "rejects a wrong/unknown token" do
+      assert {:error, :invalid_token} =
+               Auth.claim_enrollment("carol@example.com", "NOTAREALTOKEN")
+    end
+
+    test "rejects when the email does not match the token's user", %{token: token} do
+      assert {:error, :invalid_token} = Auth.claim_enrollment("mallory@example.com", token)
+    end
+
+    test "rejects an expired token", %{token: token} do
+      Repo.update_all(EnrollmentToken,
+        set: [expires_at: DateTime.add(DateTime.utc_now(), -60, :second)]
+      )
+
+      assert {:error, :invalid_token} = Auth.claim_enrollment("carol@example.com", token)
+    end
+  end
 
   describe "HMAC signature" do
     test "create_signature generates consistent signatures" do
       secret = "rps_test_secret"
-      timestamp = 1704067200
+      timestamp = 1_704_067_200
       email = "test@example.com"
       api_key = "rpa_test_key"
 
@@ -19,7 +87,7 @@ defmodule ReplicantServer.AuthTest do
 
     test "different inputs produce different signatures" do
       secret = "rps_test_secret"
-      timestamp = 1704067200
+      timestamp = 1_704_067_200
       email = "test@example.com"
       api_key = "rpa_test_key"
 
@@ -27,42 +95,6 @@ defmodule ReplicantServer.AuthTest do
       sig2 = Auth.create_signature(secret, timestamp, "other@example.com", api_key)
 
       assert sig1 != sig2
-    end
-  end
-
-  describe "deterministic_user_id" do
-    test "generates consistent UUIDs for same email" do
-      email = "test@example.com"
-
-      id1 = Auth.deterministic_user_id(email)
-      id2 = Auth.deterministic_user_id(email)
-
-      assert id1 == id2
-      assert String.length(id1) == 36
-    end
-
-    test "generates different UUIDs for different emails" do
-      id1 = Auth.deterministic_user_id("alice@example.com")
-      id2 = Auth.deterministic_user_id("bob@example.com")
-
-      assert id1 != id2
-    end
-
-    test "derives the frozen golden vectors for namespace com.nodeaudio.entonal" do
-      assert Auth.deterministic_user_id("test@example.com") ==
-               "71b2b712-7878-56ee-8323-43809b8198a5"
-
-      assert Auth.deterministic_user_id("alice@example.com") ==
-               "af665bed-e8e7-5b1f-ba4f-9343fefde4bb"
-
-      assert Auth.deterministic_user_id("bob@example.com") ==
-               "22025cd4-e01b-560e-8004-8614ef9bd52e"
-    end
-
-    test "case and surrounding whitespace do not change the derived id" do
-      base = Auth.deterministic_user_id("alice@example.com")
-      assert Auth.deterministic_user_id("  Alice@Example.COM  ") == base
-      assert Auth.deterministic_user_id("ALICE@EXAMPLE.COM") == base
     end
   end
 

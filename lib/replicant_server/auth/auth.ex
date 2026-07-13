@@ -7,15 +7,14 @@ defmodule ReplicantServer.Auth do
 
   import Ecto.Query
   alias ReplicantServer.Repo
-  alias ReplicantServer.Auth.ApiCredential
+  alias ReplicantServer.Accounts
+  alias ReplicantServer.Auth.{ApiCredential, EnrollmentToken}
 
   @hmac_window_seconds 300
   @api_key_prefix "rpa_"
   @secret_prefix "rps_"
-
-  # App namespace for deterministic user IDs. FROZEN — must match every client
-  # (Rust replicant-client). Changing this re-maps every email to a new id.
-  @app_namespace_id "com.nodeaudio.entonal"
+  @enrollment_token_bytes 8
+  @enrollment_ttl_seconds 900
 
   @doc """
   Verifies an HMAC signature for API authentication.
@@ -63,29 +62,105 @@ defmodule ReplicantServer.Auth do
   end
 
   @doc """
-  Normalizes an email for identity derivation: trim surrounding whitespace,
-  then Unicode-downcase. MUST stay byte-identical to the client implementation
-  (Rust replicant-client) — otherwise the same person derives different IDs.
-  Deliberately does NOT do provider-specific alias canonicalization (e.g. Gmail dots).
+  Mints a one-time enrollment token for `email`, creating the user if needed.
+  Stores only the token's hash; returns the plaintext token for delivery.
+  Always succeeds for a well-formed email (no account enumeration).
+  """
+  def request_enrollment(email) do
+    normalized = normalize_email(email)
+
+    with {:ok, user} <- Accounts.get_or_create_user(normalized) do
+      token = generate_enrollment_token()
+
+      attrs = %{
+        user_id: user.id,
+        token_hash: hash_token(token),
+        expires_at: DateTime.add(DateTime.utc_now(), @enrollment_ttl_seconds, :second)
+      }
+
+      case %EnrollmentToken{} |> EnrollmentToken.changeset(attrs) |> Repo.insert() do
+        {:ok, _} -> {:ok, token}
+        {:error, changeset} -> {:error, changeset}
+      end
+    end
+  end
+
+  @doc """
+  Exchanges a valid, unused, unexpired enrollment token (bound to `email`'s user)
+  for a freshly minted per-user API credential. Marks the token used atomically.
+  Returns `{:error, :invalid_token}` on any failure (no distinguishing detail).
+  """
+  def claim_enrollment(email, token) do
+    normalized = normalize_email(email)
+    hash = hash_token(token)
+    now = DateTime.utc_now()
+
+    query =
+      from t in EnrollmentToken,
+        where: t.token_hash == ^hash and is_nil(t.used_at) and t.expires_at > ^now,
+        preload: [:user]
+
+    case Repo.one(query) do
+      %EnrollmentToken{user: %{email: ^normalized} = user} = enrollment ->
+        claim_token(enrollment, user)
+
+      _ ->
+        {:error, :invalid_token}
+    end
+  end
+
+  @doc """
+  Normalizes an email for storage and lookup: trim surrounding whitespace,
+  then Unicode-downcase. Deliberately does NOT do provider-specific alias
+  canonicalization (e.g. Gmail dots).
   """
   def normalize_email(email) when is_binary(email) do
     email |> String.trim() |> String.downcase()
   end
 
-  @doc """
-  Generates a deterministic user ID from email using UUID v5.
+  # Private functions
 
-  Normalizes the email first, then derives `uuid5(uuid5(DNS, namespace), email)`.
-  This matches the client implementation so the same user ID is produced on both
-  client and server.
-  """
-  def deterministic_user_id(email) do
-    normalized = normalize_email(email)
-    app_namespace = UUID.uuid5(:dns, @app_namespace_id)
-    UUID.uuid5(app_namespace, normalized)
+  defp generate_enrollment_token do
+    :crypto.strong_rand_bytes(@enrollment_token_bytes)
+    |> Base.encode32(padding: false, case: :upper)
   end
 
-  # Private functions
+  defp hash_token(token) do
+    :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
+  end
+
+  defp claim_token(enrollment, user) do
+    now = DateTime.utc_now()
+
+    # Mark-used and mint must commit together: if the credential insert fails,
+    # the token must NOT stay consumed, or the user is locked out of a code
+    # they never successfully redeemed.
+    Repo.transaction(fn ->
+      {count, _} =
+        Repo.update_all(
+          from(t in EnrollmentToken, where: t.id == ^enrollment.id and is_nil(t.used_at)),
+          set: [used_at: now, updated_at: now]
+        )
+
+      with 1 <- count,
+           {:ok, creds} <- mint_credential(user) do
+        creds
+      else
+        0 -> Repo.rollback(:invalid_token)
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+  end
+
+  defp mint_credential(user) do
+    creds = generate_credentials()
+    attrs = Map.merge(creds, %{name: "device:#{user.email}", user_id: user.id})
+
+    case %ApiCredential{} |> ApiCredential.changeset(attrs) |> Repo.insert() do
+      {:ok, _credential} -> {:ok, creds}
+      {:error, changeset} -> {:error, changeset}
+    end
+  end
 
   defp verify_timestamp(timestamp) when is_integer(timestamp) do
     now = System.system_time(:second)

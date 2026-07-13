@@ -8,7 +8,7 @@ defmodule ReplicantServer.Factory.Backfill do
 
   import Ecto.Query
 
-  alias ReplicantServer.{Accounts, Auth, Repo}
+  alias ReplicantServer.{Accounts, Repo}
   alias ReplicantServer.Documents.Document
   alias ReplicantServer.Factory.Contributors
 
@@ -67,7 +67,7 @@ defmodule ReplicantServer.Factory.Backfill do
 
     owner = Map.fetch!(minted, owner_entry.display_name)
 
-    doc_id = Auth.deterministic_user_id(@doc_namespace <> "/" <> slug)
+    doc_id = deterministic_doc_id(slug)
 
     attrs = %{
       id: doc_id,
@@ -92,5 +92,15 @@ defmodule ReplicantServer.Factory.Backfill do
 
         :updated
     end
+  end
+
+  @doc """
+  Stable per-slug document id so backfill re-runs update in place. Reproduces
+  the historical derivation (trim+downcase, uuid5 under the legacy namespace)
+  byte-for-byte so existing factory documents keep their ids.
+  """
+  def deterministic_doc_id(slug) do
+    name = (@doc_namespace <> "/" <> slug) |> String.trim() |> String.downcase()
+    UUID.uuid5(UUID.uuid5(:dns, "com.nodeaudio.entonal"), name)
   end
 end

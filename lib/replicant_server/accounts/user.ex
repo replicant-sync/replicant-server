@@ -2,11 +2,12 @@ defmodule ReplicantServer.Accounts.User do
   use Ecto.Schema
   import Ecto.Changeset
 
-  @primary_key {:id, :binary_id, autogenerate: false}
+  @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
   schema "users" do
     field :email, :string
+    field :username, :string
     field :display_name, :string
     field :last_seen_at, :utc_datetime_usec
 
@@ -17,8 +18,9 @@ defmodule ReplicantServer.Accounts.User do
 
   def changeset(user, attrs) do
     user
-    |> cast(attrs, [:id, :email, :display_name, :last_seen_at])
-    |> validate_required([:id, :email])
+    |> cast(attrs, [:email, :username, :display_name, :last_seen_at])
+    |> validate_required([:email])
     |> unique_constraint(:email)
+    |> unique_constraint(:username)
   end
 end

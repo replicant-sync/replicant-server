@@ -38,3 +38,16 @@ replicant_server-*.tar
 # Kamal secrets and config (contains passwords/server details)
 .kamal/secrets
 config/deploy.yml
+
+# Claude Code local session/handoff state (never commit)
+.claude/session-state.md
+.claude/handoff-consent
+.claude/handoff-*
+.claude/context.md
+.claude/current-task.md
+.claude/current-bug.md
+.claude/bug-test-log.md
+.claude/task-history.md
+.claude/recent-prompts.md
+.claude/mode
+.claude/worktrees/

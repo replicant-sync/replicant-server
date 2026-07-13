@@ -120,6 +120,7 @@ defmodule ReplicantServer.Documents do
 
       document ->
         current_hash = document.content_hash
+
         if content_hash != nil and current_hash != content_hash do
           {:error, :hash_mismatch, document}
         else
@@ -312,10 +313,11 @@ defmodule ReplicantServer.Documents do
         {attrs.id, create_document(target_user_id, attrs)}
       end)
 
-    copied = Enum.count(results, fn
-      {new_id, {:ok, doc}} -> doc.id == new_id
-      _ -> false
-    end)
+    copied =
+      Enum.count(results, fn
+        {new_id, {:ok, doc}} -> doc.id == new_id
+        _ -> false
+      end)
 
     skipped = length(docs) - copied
 
@@ -334,13 +336,14 @@ defmodule ReplicantServer.Documents do
       {:ok, %{copied: 42, skipped: 0}}
   """
   def copy_all_documents_by_email(source_email, target_email) do
-    source_id = ReplicantServer.Auth.deterministic_user_id(source_email)
-    target_id = ReplicantServer.Auth.deterministic_user_id(target_email)
-
-    # Ensure target user exists
-    ReplicantServer.Accounts.get_or_create_user(target_email)
-
-    copy_all_documents(source_id, target_id)
+    with %ReplicantServer.Accounts.User{} = source <-
+           ReplicantServer.Accounts.get_user_by_email(source_email),
+         {:ok, target} <- ReplicantServer.Accounts.get_or_create_user(target_email) do
+      copy_all_documents(source.id, target.id)
+    else
+      nil -> {:error, :source_not_found}
+      error -> error
+    end
   end
 
   # --- Public documents (user_id IS NULL) ---
@@ -402,9 +405,15 @@ defmodule ReplicantServer.Documents do
             broadcast_to_sync_clients(
               "sync:public",
               "document_created",
-              %{id: doc.id, content: doc.content, sync_revision: doc.sync_revision, content_hash: doc.content_hash}
+              %{
+                id: doc.id,
+                content: doc.content,
+                sync_revision: doc.sync_revision,
+                content_hash: doc.content_hash
+              }
               |> Map.merge(envelope_fields(doc))
             )
+
             {:ok, doc}
 
           {:error, changeset} ->
@@ -429,6 +438,7 @@ defmodule ReplicantServer.Documents do
 
           if document.user_id do
             broadcast("documents:user:#{document.user_id}", {:document_updated, updated})
+
             broadcast_to_sync_clients("sync:user:#{document.user_id}", "document_updated", %{
               id: updated.id,
               patch: patch,
@@ -437,6 +447,7 @@ defmodule ReplicantServer.Documents do
             })
           else
             broadcast("documents:public", {:document_updated, updated})
+
             broadcast_to_sync_clients("sync:public", "document_updated", %{
               id: updated.id,
               patch: patch,
@@ -490,7 +501,8 @@ defmodule ReplicantServer.Documents do
   defp find_public_by_content_hash(content_hash) when is_binary(content_hash) do
     Repo.one(
       from d in Document,
-        where: d.visibility == "public" and d.content_hash == ^content_hash and is_nil(d.deleted_at),
+        where:
+          d.visibility == "public" and d.content_hash == ^content_hash and is_nil(d.deleted_at),
         limit: 1
     )
   end
@@ -498,6 +510,7 @@ defmodule ReplicantServer.Documents do
   defp find_public_by_content_hash(_content_hash), do: nil
 
   defp validate_field(nil, default), do: default
+
   defp validate_field(field, default) when is_binary(field) do
     case String.to_existing_atom(field) do
       f when f in @allowed_sort_fields -> f
@@ -506,6 +519,7 @@ defmodule ReplicantServer.Documents do
   rescue
     ArgumentError -> default
   end
+
   defp validate_field(field, default) when is_atom(field) do
     if field in @allowed_sort_fields, do: field, else: default
   end
@@ -518,17 +532,21 @@ defmodule ReplicantServer.Documents do
 
   defp maybe_search(query, nil), do: query
   defp maybe_search(query, ""), do: query
+
   defp maybe_search(query, term) do
     sanitized = "%#{sanitize_like(term)}%"
+
     from d in query,
       where: ilike(d.title, ^sanitized) or ilike(type(d.content, :string), ^sanitized)
   end
 
   defp apply_json_filters(query, []), do: query
+
   defp apply_json_filters(query, filters) do
     Enum.reduce(filters, query, fn {key, value}, q ->
       if key != "" and value != "" do
         sanitized = "%#{sanitize_like(value)}%"
+
         from d in q,
           where: ilike(fragment("?->>?", d.content, ^key), ^sanitized)
       else

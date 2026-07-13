@@ -23,7 +23,19 @@ defmodule ReplicantServer.Documents.Document do
 
   def changeset(document, attrs) do
     document
-    |> cast(attrs, [:id, :user_id, :content, :sync_revision, :content_hash, :title, :author_name, :visibility, :provenance, :size_bytes, :deleted_at])
+    |> cast(attrs, [
+      :id,
+      :user_id,
+      :content,
+      :sync_revision,
+      :content_hash,
+      :title,
+      :author_name,
+      :visibility,
+      :provenance,
+      :size_bytes,
+      :deleted_at
+    ])
     |> validate_required([:id, :content])
     |> validate_inclusion(:visibility, ["private", "public"])
     |> foreign_key_constraint(:user_id)
@@ -31,7 +43,17 @@ defmodule ReplicantServer.Documents.Document do
 
   def create_changeset(document, attrs) do
     document
-    |> cast(attrs, [:id, :user_id, :content, :content_hash, :title, :author_name, :visibility, :provenance, :size_bytes])
+    |> cast(attrs, [
+      :id,
+      :user_id,
+      :content,
+      :content_hash,
+      :title,
+      :author_name,
+      :visibility,
+      :provenance,
+      :size_bytes
+    ])
     |> validate_required([:id, :content])
     |> validate_inclusion(:visibility, ["private", "public"])
     |> put_change(:sync_revision, 1)

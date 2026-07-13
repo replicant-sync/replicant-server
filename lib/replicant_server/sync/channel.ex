@@ -6,39 +6,47 @@ defmodule ReplicantServer.Sync.Channel do
   """
   use Phoenix.Channel
 
-  alias ReplicantServer.{Auth, Accounts, Documents}
+  alias ReplicantServer.{Auth, Documents}
   alias ReplicantServer.OT.Transform
 
   require Logger
 
   @impl true
-  def join("sync:" <> _topic, params, socket) do
+  def join("sync:" <> _rest = topic, params, socket) do
     with {:ok, email} <- Map.fetch(params, "email"),
          {:ok, api_key} <- Map.fetch(params, "api_key"),
          {:ok, signature} <- Map.fetch(params, "signature"),
          {:ok, timestamp} <- Map.fetch(params, "timestamp"),
-         {:ok, _credential} <- Auth.verify_hmac(api_key, signature, timestamp, email),
-         {:ok, user} <- Accounts.get_or_create_user(email) do
-      socket =
-        socket
-        |> assign(:user_id, user.id)
-        |> assign(:email, email)
+         {:ok, credential} <- Auth.verify_hmac(api_key, signature, timestamp, email),
+         :ok <- require_enrolled(credential.user_id),
+         :ok <- validate_topic(topic, credential.user_id) do
+      socket = assign(socket, :user_id, credential.user_id)
 
-      Logger.info("User #{email} joined sync channel")
-      {:ok, %{user_id: user.id}, socket}
+      Logger.info("Credential #{credential.id} joined #{topic}")
+      {:ok, %{user_id: credential.user_id}, socket}
     else
       :error ->
         {:error, %{reason: "missing_params"}}
 
-      {:error, %Ecto.Changeset{} = changeset} ->
-        Logger.warning("User resolution failed on join: #{inspect(changeset.errors)}")
-        {:error, %{reason: "user_resolution_failed"}}
-
       {:error, reason} ->
-        Logger.warning("Auth failed: #{inspect(reason)}")
+        Logger.warning("Join rejected: #{inspect(reason)}")
         {:error, %{reason: to_string(reason)}}
     end
   end
+
+  # Identity comes from the authenticated credential's user_id. A credential
+  # with no user_id (the retired shared secret) cannot resolve identity and is
+  # refused before any topic check — otherwise a nil user_id reaches document
+  # queries and raises on `where user_id == ^nil`.
+  defp require_enrolled(nil), do: {:error, :credential_not_enrolled}
+  defp require_enrolled(_user_id), do: :ok
+
+  defp validate_topic("sync:user:" <> topic_id, user_id) do
+    if topic_id == user_id, do: :ok, else: {:error, :topic_user_mismatch}
+  end
+
+  defp validate_topic("sync:public", _user_id), do: :ok
+  defp validate_topic(_topic, _user_id), do: {:error, :invalid_topic}
 
   # ============================================================================
   # Create Document
@@ -65,7 +73,11 @@ defmodule ReplicantServer.Sync.Channel do
 
         {:reply,
          {:ok,
-          %{id: document.id, sync_revision: document.sync_revision, content_hash: document.content_hash}
+          %{
+            id: document.id,
+            sync_revision: document.sync_revision,
+            content_hash: document.content_hash
+          }
           |> Map.merge(Documents.envelope_fields(document))}, socket}
 
       {:error, :conflict, existing} ->

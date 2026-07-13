@@ -7,7 +7,13 @@ defmodule ReplicantServer.AttributionSchemaTest do
   alias ReplicantServer.Repo
 
   test "user changeset accepts display_name" do
-    cs = User.changeset(%User{}, %{id: Ecto.UUID.generate(), email: "x@example.com", display_name: "Ex"})
+    cs =
+      User.changeset(%User{}, %{
+        id: Ecto.UUID.generate(),
+        email: "x@example.com",
+        display_name: "Ex"
+      })
+
     assert cs.valid?
     assert get_field(cs, :display_name) == "Ex"
   end
@@ -17,7 +23,11 @@ defmodule ReplicantServer.AttributionSchemaTest do
 
     {:ok, doc} =
       %Document{}
-      |> Document.create_changeset(%{id: Ecto.UUID.generate(), user_id: user.id, content: %{"title" => "D"}})
+      |> Document.create_changeset(%{
+        id: Ecto.UUID.generate(),
+        user_id: user.id,
+        content: %{"title" => "D"}
+      })
       |> Repo.insert()
 
     assert doc.visibility == "private"
@@ -25,7 +35,13 @@ defmodule ReplicantServer.AttributionSchemaTest do
   end
 
   test "document rejects an unknown visibility value" do
-    cs = Document.create_changeset(%Document{}, %{id: Ecto.UUID.generate(), content: %{"title" => "D"}, visibility: "secret"})
+    cs =
+      Document.create_changeset(%Document{}, %{
+        id: Ecto.UUID.generate(),
+        content: %{"title" => "D"},
+        visibility: "secret"
+      })
+
     refute cs.valid?
     assert %{visibility: _} = errors_on(cs)
   end
