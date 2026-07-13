@@ -157,7 +157,7 @@ defmodule ReplicantServer.Auth do
     attrs = Map.merge(creds, %{name: "device:#{user.email}", user_id: user.id})
 
     case %ApiCredential{} |> ApiCredential.changeset(attrs) |> Repo.insert() do
-      {:ok, _credential} -> {:ok, creds}
+      {:ok, _credential} -> {:ok, Map.put(creds, :user_id, user.id)}
       {:error, changeset} -> {:error, changeset}
     end
   end

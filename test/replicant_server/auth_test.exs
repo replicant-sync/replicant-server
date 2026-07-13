@@ -69,6 +69,13 @@ defmodule ReplicantServer.AuthTest do
 
       assert {:error, :invalid_token} = Auth.claim_enrollment("carol@example.com", token)
     end
+
+    test "claim_enrollment returns the canonical user id with the credentials" do
+      {:ok, token} = Auth.request_enrollment("claimid@example.com")
+      {:ok, user} = ReplicantServer.Accounts.get_or_create_user("claimid@example.com")
+      assert {:ok, creds} = Auth.claim_enrollment("claimid@example.com", token)
+      assert creds.user_id == user.id
+    end
   end
 
   describe "HMAC signature" do
