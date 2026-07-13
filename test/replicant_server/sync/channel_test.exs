@@ -123,6 +123,25 @@ defmodule ReplicantServer.Sync.ChannelTest do
                  }
                )
     end
+
+    test "a credential with no user_id cannot join sync:public", %{timestamp: timestamp} do
+      {:ok, legacy} = Auth.create_credential("legacy-shared")
+      email = "anyone@example.com"
+      signature = Auth.create_signature(legacy.secret, timestamp, email, legacy.api_key)
+
+      assert {:error, %{reason: "credential_not_enrolled"}} =
+               socket(ReplicantServer.Sync.Socket, "user_socket", %{})
+               |> subscribe_and_join(
+                 ReplicantServer.Sync.Channel,
+                 "sync:public",
+                 %{
+                   "email" => email,
+                   "api_key" => legacy.api_key,
+                   "signature" => signature,
+                   "timestamp" => timestamp
+                 }
+               )
+    end
   end
 
   describe "create_document" do

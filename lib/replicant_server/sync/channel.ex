@@ -18,6 +18,7 @@ defmodule ReplicantServer.Sync.Channel do
          {:ok, signature} <- Map.fetch(params, "signature"),
          {:ok, timestamp} <- Map.fetch(params, "timestamp"),
          {:ok, credential} <- Auth.verify_hmac(api_key, signature, timestamp, email),
+         :ok <- require_enrolled(credential.user_id),
          :ok <- validate_topic(topic, credential.user_id) do
       socket = assign(socket, :user_id, credential.user_id)
 
@@ -34,13 +35,14 @@ defmodule ReplicantServer.Sync.Channel do
   end
 
   # Identity comes from the authenticated credential's user_id. A credential
-  # with no user_id (the retired shared secret) cannot resolve identity.
+  # with no user_id (the retired shared secret) cannot resolve identity and is
+  # refused before any topic check — otherwise a nil user_id reaches document
+  # queries and raises on `where user_id == ^nil`.
+  defp require_enrolled(nil), do: {:error, :credential_not_enrolled}
+  defp require_enrolled(_user_id), do: :ok
+
   defp validate_topic("sync:user:" <> topic_id, user_id) do
-    cond do
-      is_nil(user_id) -> {:error, :credential_not_enrolled}
-      topic_id == user_id -> :ok
-      true -> {:error, :topic_user_mismatch}
-    end
+    if topic_id == user_id, do: :ok, else: {:error, :topic_user_mismatch}
   end
 
   defp validate_topic("sync:public", _user_id), do: :ok
