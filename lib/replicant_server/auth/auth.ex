@@ -132,16 +132,24 @@ defmodule ReplicantServer.Auth do
   defp claim_token(enrollment, user) do
     now = DateTime.utc_now()
 
-    {count, _} =
-      Repo.update_all(
-        from(t in EnrollmentToken, where: t.id == ^enrollment.id and is_nil(t.used_at)),
-        set: [used_at: now, updated_at: now]
-      )
+    # Mark-used and mint must commit together: if the credential insert fails,
+    # the token must NOT stay consumed, or the user is locked out of a code
+    # they never successfully redeemed.
+    Repo.transaction(fn ->
+      {count, _} =
+        Repo.update_all(
+          from(t in EnrollmentToken, where: t.id == ^enrollment.id and is_nil(t.used_at)),
+          set: [used_at: now, updated_at: now]
+        )
 
-    case count do
-      1 -> mint_credential(user)
-      0 -> {:error, :invalid_token}
-    end
+      with 1 <- count,
+           {:ok, creds} <- mint_credential(user) do
+        creds
+      else
+        0 -> Repo.rollback(:invalid_token)
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
   end
 
   defp mint_credential(user) do
