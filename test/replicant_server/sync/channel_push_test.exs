@@ -39,6 +39,19 @@ defmodule ReplicantServer.Sync.ChannelPushTest do
     %{user_id: user.id, socket: socket}
   end
 
+  test "a context delete_document is pushed to a joined user channel", %{user_id: user_id} do
+    {:ok, doc} =
+      Documents.create_document(user_id, %{
+        "id" => Ecto.UUID.generate(),
+        "content" => %{"title" => "Doomed"}
+      })
+
+    {:ok, _deleted} = Documents.delete_document(user_id, doc.id)
+
+    assert_push "document_deleted", payload
+    assert payload.id == doc.id
+  end
+
   test "a context replace_content is pushed to a joined user channel", %{user_id: user_id} do
     {:ok, doc} =
       Documents.create_document(user_id, %{

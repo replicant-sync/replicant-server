@@ -199,8 +199,22 @@ defmodule ReplicantServer.Documents do
         end)
         |> Repo.transaction()
         |> case do
-          {:ok, %{document: deleted_doc}} -> {:ok, deleted_doc}
-          {:error, _, _, _} -> {:error, :delete_failed}
+          {:ok, %{document: deleted_doc}} ->
+            delete_payload = %{id: deleted_doc.id}
+
+            broadcast("documents:#{deleted_doc.id}", {:document_deleted, deleted_doc})
+            broadcast("documents:user:#{user_id}", {:document_deleted, deleted_doc})
+            broadcast_to_sync_clients("sync:user:#{user_id}", "document_deleted", delete_payload)
+
+            if deleted_doc.visibility == "public" do
+              broadcast("documents:public", {:document_deleted, deleted_doc})
+              broadcast_to_sync_clients("sync:public", "document_deleted", delete_payload)
+            end
+
+            {:ok, deleted_doc}
+
+          {:error, _, _, _} ->
+            {:error, :delete_failed}
         end
     end
   end
