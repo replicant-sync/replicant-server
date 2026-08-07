@@ -246,6 +246,15 @@ defmodule ReplicantServer.Sync.Channel do
     end
   end
 
+  # Context-originated broadcasts (a host app writing through Documents) are
+  # delivered to the channel process rather than the transport fastlane, and
+  # Phoenix hands them to handle_out/3 — forward them to the client unchanged.
+  @impl true
+  def handle_out(event, payload, socket) do
+    push(socket, event, payload)
+    {:noreply, socket}
+  end
+
   # ============================================================================
   # Helpers
   # ============================================================================
