@@ -87,6 +87,20 @@ defmodule ReplicantServer.Documents do
         |> Repo.transaction()
         |> case do
           {:ok, %{document: document}} ->
+            broadcast("documents:user:#{user_id}", {:document_created, document})
+
+            broadcast_to_sync_clients(
+              "sync:user:#{user_id}",
+              "document_created",
+              %{
+                id: document.id,
+                content: document.content,
+                sync_revision: document.sync_revision,
+                content_hash: document.content_hash
+              }
+              |> Map.merge(envelope_fields(document))
+            )
+
             {:ok, document}
 
           {:error, :document, %Ecto.Changeset{errors: errors}, _} ->
