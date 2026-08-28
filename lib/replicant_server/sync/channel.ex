@@ -201,7 +201,11 @@ defmodule ReplicantServer.Sync.Channel do
   def handle_in("get_document", %{"id" => document_id}, socket) do
     user_id = socket.assigns.user_id
 
-    case Documents.get_user_document_any(user_id, document_id) do
+    document =
+      Documents.get_user_document_any(user_id, document_id) ||
+        Documents.get_public_document_any(document_id)
+
+    case document do
       nil ->
         {:reply, {:error, %{reason: "not_found"}}, socket}
 

@@ -518,6 +518,16 @@ defmodule ReplicantServer.Documents do
   end
 
   @doc """
+  Gets a public document by ID, including soft-deleted documents.
+  """
+  def get_public_document_any(id) do
+    Repo.one(
+      from d in Document,
+        where: d.id == ^id and d.visibility == "public"
+    )
+  end
+
+  @doc """
   Creates a public document (no user_id).
   """
   def create_public_document(attrs) do
