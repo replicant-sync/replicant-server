@@ -242,6 +242,48 @@ defmodule ReplicantServer.Sync.ChannelTest do
     end
   end
 
+  describe "create_document self-echo" do
+    test "creator does not receive its own document_created push, other device does", context do
+      socket = join_user_channel(context)
+      test_pid = self()
+
+      other_device =
+        Task.async(fn ->
+          {:ok, _reply, _socket} =
+            socket(ReplicantServer.Sync.Socket, "user_socket", %{}, test_process: test_pid)
+            |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{context.user_id}", %{
+              "email" => context.email,
+              "api_key" => context.credential.api_key,
+              "signature" => context.signature,
+              "timestamp" => context.timestamp
+            })
+
+          send(test_pid, :joined)
+
+          assert_push "document_created", payload
+          payload
+        end)
+
+      receive do
+        :joined -> :ok
+      end
+
+      doc_id = UUID.uuid4()
+
+      ref =
+        push(socket, "create_document", %{
+          "id" => doc_id,
+          "content" => %{"title" => "Multi-device"}
+        })
+
+      assert_reply ref, :ok, %{id: ^doc_id}
+
+      refute_push "document_created", %{}
+
+      assert %{id: ^doc_id} = Task.await(other_device)
+    end
+  end
+
   describe "update_document" do
     setup context do
       socket = join_user_channel(context)
@@ -295,6 +337,98 @@ defmodule ReplicantServer.Sync.ChannelTest do
         })
 
       assert_reply ref, :error, %{reason: "missing_hash"}
+    end
+  end
+
+  describe "update_document / delete_document self-echo" do
+    setup context do
+      {:ok, doc} =
+        ReplicantServer.Documents.create_document(context.user_id, %{
+          "id" => UUID.uuid4(),
+          "content" => %{"title" => "Original"}
+        })
+
+      %{doc: doc}
+    end
+
+    defp join_second_device(context, test_pid) do
+      {:ok, _reply, _socket} =
+        socket(ReplicantServer.Sync.Socket, "user_socket", %{}, test_process: test_pid)
+        |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{context.user_id}", %{
+          "email" => context.email,
+          "api_key" => context.credential.api_key,
+          "signature" => context.signature,
+          "timestamp" => context.timestamp
+        })
+
+      :ok
+    end
+
+    test "update: creator does not receive its own push; other device gets exactly one",
+         %{
+           doc: doc
+         } = context do
+      socket = join_user_channel(context)
+      test_pid = self()
+
+      other_device =
+        Task.async(fn ->
+          join_second_device(context, test_pid)
+          send(test_pid, :joined)
+
+          assert_push "document_updated", payload
+          refute_push "document_updated", %{}
+          payload
+        end)
+
+      receive do
+        :joined -> :ok
+      end
+
+      ref =
+        push(socket, "update_document", %{
+          "id" => doc.id,
+          "patch" => [%{op: "replace", path: "/title", value: "Updated"}],
+          "content_hash" => doc.content_hash
+        })
+
+      assert_reply ref, :ok, %{sync_revision: 2}
+
+      refute_push "document_updated", %{}
+
+      doc_id = doc.id
+      assert %{id: ^doc_id} = Task.await(other_device)
+    end
+
+    test "delete: creator does not receive its own push; other device gets exactly one",
+         %{
+           doc: doc
+         } = context do
+      socket = join_user_channel(context)
+      test_pid = self()
+
+      other_device =
+        Task.async(fn ->
+          join_second_device(context, test_pid)
+          send(test_pid, :joined)
+
+          assert_push "document_deleted", payload
+          refute_push "document_deleted", %{}
+          payload
+        end)
+
+      receive do
+        :joined -> :ok
+      end
+
+      ref = push(socket, "delete_document", %{"id" => doc.id})
+
+      assert_reply ref, :ok
+
+      refute_push "document_deleted", %{}
+
+      doc_id = doc.id
+      assert %{id: ^doc_id} = Task.await(other_device)
     end
   end
 

@@ -68,6 +68,23 @@ defmodule ReplicantServer.Sync.ChannelPushTest do
     assert payload.id == doc.id
   end
 
+  test "a context update_document (no opts) is pushed to a joined user channel", %{
+    user_id: user_id
+  } do
+    {:ok, doc} =
+      Documents.create_document(user_id, %{
+        "id" => Ecto.UUID.generate(),
+        "content" => %{"title" => "Original"}
+      })
+
+    patch = [%{op: "replace", path: "/title", value: "New"}]
+    {:ok, updated} = Documents.update_document(user_id, doc.id, patch, doc.content_hash)
+
+    assert_push "document_updated", payload
+    assert payload.id == doc.id
+    assert payload.sync_revision == updated.sync_revision
+  end
+
   test "a context replace_content is pushed to a joined user channel", %{user_id: user_id} do
     {:ok, doc} =
       Documents.create_document(user_id, %{

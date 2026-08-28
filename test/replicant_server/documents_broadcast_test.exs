@@ -19,6 +19,29 @@ defmodule ReplicantServer.DocumentsBroadcastTest do
     %{user_id: user.id, email: email}
   end
 
+  describe "create_document broadcasts to sync channels (non-channel origin)" do
+    test "broadcasts document_created to user sync channel with no exclusion", %{
+      user_id: user_id
+    } do
+      @endpoint.subscribe("sync:user:#{user_id}")
+
+      {:ok, doc} =
+        Documents.create_document(user_id, %{
+          "id" => Ecto.UUID.generate(),
+          "content" => %{"title" => "Created via web"}
+        })
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        topic: "sync:user:" <> _,
+        event: "document_created",
+        payload: payload
+      }
+
+      assert payload.id == doc.id
+      assert payload.content == %{"title" => "Created via web"}
+    end
+  end
+
   describe "replace_content broadcasts to sync channels" do
     test "broadcasts document_updated to user sync channel", %{user_id: user_id} do
       # Create a user document

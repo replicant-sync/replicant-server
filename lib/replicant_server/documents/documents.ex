@@ -56,9 +56,14 @@ defmodule ReplicantServer.Documents do
   @doc """
   Creates a document with event logging in a transaction.
 
+  `opts` may include `:broadcast_from` — a pid to exclude from the
+  `sync:user:*` broadcast (the calling channel process, so the creating
+  client doesn't receive its own document_created back). Web/LiveView
+  callers omit it and every connected sync client is notified.
+
   Returns `{:ok, document}` or `{:error, reason}` or `{:error, :conflict, existing_doc}`.
   """
-  def create_document(user_id, attrs) do
+  def create_document(user_id, attrs, opts \\ []) do
     document_id = attrs[:id] || attrs["id"]
     content = attrs[:content] || attrs["content"]
     content_hash = compute_hash(content)
@@ -108,7 +113,8 @@ defmodule ReplicantServer.Documents do
                 sync_revision: document.sync_revision,
                 content_hash: document.content_hash
               }
-              |> Map.merge(envelope_fields(document))
+              |> Map.merge(envelope_fields(document)),
+              opts
             )
 
             {:ok, document}
@@ -136,12 +142,20 @@ defmodule ReplicantServer.Documents do
   Validates that the client's content_hash matches the current document's hash
   to ensure the client was working with the correct base content.
   A nil content_hash is rejected rather than treated as "skip the check".
+
+  `opts` may include `:broadcast_from` — see `create_document/3`. Broadcasts
+  to `sync:user:*` (and `sync:public` when the document is public) itself;
+  `apply_update/2` stays broadcast-free since it's also called by
+  `replace_content/2`, which does its own unconditional broadcast.
+
   Returns `{:ok, document}`, `{:error, :hash_mismatch, current_doc}`,
   `{:error, :missing_hash}`, or `{:error, reason}`.
   """
-  def update_document(_user_id, _document_id, _patch, nil), do: {:error, :missing_hash}
+  def update_document(user_id, document_id, patch, content_hash, opts \\ [])
 
-  def update_document(user_id, document_id, patch, content_hash) do
+  def update_document(_user_id, _document_id, _patch, nil, _opts), do: {:error, :missing_hash}
+
+  def update_document(user_id, document_id, patch, content_hash, opts) do
     case get_user_document(user_id, document_id) do
       nil ->
         {:error, :not_found}
@@ -150,7 +164,26 @@ defmodule ReplicantServer.Documents do
         if document.content_hash != content_hash do
           {:error, :hash_mismatch, document}
         else
-          apply_update(document, patch)
+          case apply_update(document, patch) do
+            {:ok, updated} ->
+              payload = %{
+                id: updated.id,
+                patch: patch,
+                sync_revision: updated.sync_revision,
+                content_hash: updated.content_hash
+              }
+
+              broadcast_to_sync_clients("sync:user:#{user_id}", "document_updated", payload, opts)
+
+              if updated.visibility == "public" do
+                broadcast_to_sync_clients("sync:public", "document_updated", payload, opts)
+              end
+
+              {:ok, updated}
+
+            error ->
+              error
+          end
         end
     end
   end
@@ -202,8 +235,10 @@ defmodule ReplicantServer.Documents do
 
   @doc """
   Soft deletes a document with event logging.
+
+  `opts` may include `:broadcast_from` — see `create_document/3`.
   """
-  def delete_document(user_id, document_id) do
+  def delete_document(user_id, document_id, opts \\ []) do
     case get_user_document(user_id, document_id) do
       nil ->
         {:error, :not_found}
@@ -230,11 +265,17 @@ defmodule ReplicantServer.Documents do
 
             broadcast("documents:#{deleted_doc.id}", {:document_deleted, deleted_doc})
             broadcast("documents:user:#{user_id}", {:document_deleted, deleted_doc})
-            broadcast_to_sync_clients("sync:user:#{user_id}", "document_deleted", delete_payload)
+
+            broadcast_to_sync_clients(
+              "sync:user:#{user_id}",
+              "document_deleted",
+              delete_payload,
+              opts
+            )
 
             if deleted_doc.visibility == "public" do
               broadcast("documents:public", {:document_deleted, deleted_doc})
-              broadcast_to_sync_clients("sync:public", "document_deleted", delete_payload)
+              broadcast_to_sync_clients("sync:public", "document_deleted", delete_payload, opts)
             end
 
             {:ok, deleted_doc}
@@ -721,12 +762,16 @@ defmodule ReplicantServer.Documents do
     Phoenix.PubSub.broadcast(ReplicantServer.PubSub, topic, message)
   end
 
-  defp broadcast_to_sync_clients(topic, event, payload) do
-    Phoenix.PubSub.broadcast(
-      ReplicantServer.PubSub,
-      topic,
-      %Phoenix.Socket.Broadcast{topic: topic, event: event, payload: payload}
-    )
+  defp broadcast_to_sync_clients(topic, event, payload, opts \\ []) do
+    message = %Phoenix.Socket.Broadcast{topic: topic, event: event, payload: payload}
+
+    case Keyword.get(opts, :broadcast_from) do
+      nil ->
+        Phoenix.PubSub.broadcast(ReplicantServer.PubSub, topic, message)
+
+      from_pid ->
+        Phoenix.PubSub.broadcast_from(ReplicantServer.PubSub, from_pid, topic, message)
+    end
   end
 
   @doc """
