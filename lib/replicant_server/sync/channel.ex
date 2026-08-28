@@ -194,6 +194,31 @@ defmodule ReplicantServer.Sync.Channel do
   end
 
   # ============================================================================
+  # Get Document (targeted resync)
+  # ============================================================================
+
+  @impl true
+  def handle_in("get_document", %{"id" => document_id}, socket) do
+    user_id = socket.assigns.user_id
+
+    case Documents.get_user_document_any(user_id, document_id) do
+      nil ->
+        {:reply, {:error, %{reason: "not_found"}}, socket}
+
+      document ->
+        {:reply,
+         {:ok,
+          %{
+            id: document.id,
+            content: document.content,
+            sync_revision: document.sync_revision,
+            content_hash: document.content_hash,
+            deleted: document.deleted_at != nil
+          }}, socket}
+    end
+  end
+
+  # ============================================================================
   # Get Changes Since (incremental sync)
   # ============================================================================
 

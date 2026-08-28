@@ -25,6 +25,16 @@ defmodule ReplicantServer.Documents do
     )
   end
 
+  @doc """
+  Gets a document by ID if owned by user, including soft-deleted documents.
+  """
+  def get_user_document_any(user_id, document_id) do
+    Repo.one(
+      from d in Document,
+        where: d.id == ^document_id and d.user_id == ^user_id
+    )
+  end
+
   @allowed_sort_fields ~w(title size_bytes sync_revision updated_at created_at)a
 
   @doc """
