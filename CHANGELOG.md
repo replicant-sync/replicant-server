@@ -21,3 +21,15 @@ Sync-base verification (DEV-1037).
 
 `mix.exs` previously carried `0.1.0` and was never bumped; releases were tracked
 by git tag alone. It now matches the release version.
+
+### Deploy
+
+This version must not reach production until the client 0.5.0 pin ships in an
+Entonal release. Its nil-hash rejection breaks updates from 0.4.x clients,
+which still send a nil `content_hash`.
+
+Any `content_hash` stored before this release for a document with more than
+32 keys in a map, or a float `v` where `|v| >= 1e16` or `|v| < 1e-5`, is
+stale by format (computed with the old, non-canonical formatting). No
+migration or rehash is needed — the hash self-heals on that document's next
+successful update.
