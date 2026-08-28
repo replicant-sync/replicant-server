@@ -100,6 +100,10 @@ defmodule ReplicantServer.Sync.Channel do
   # Update Document
   # ============================================================================
 
+  # Documents.update_document broadcasts "document_updated" to sync:user (and
+  # sync:public, when public) itself, excluding this channel's own pid via
+  # :broadcast_from — no separate broadcast_except/maybe_broadcast_public
+  # call is needed here.
   @impl true
   def handle_in("update_document", payload, socket) do
     user_id = socket.assigns.user_id
@@ -107,18 +111,10 @@ defmodule ReplicantServer.Sync.Channel do
     patch = payload["patch"]
     content_hash = payload["content_hash"]
 
-    case Documents.update_document(user_id, document_id, patch, content_hash) do
+    case Documents.update_document(user_id, document_id, patch, content_hash,
+           broadcast_from: self()
+         ) do
       {:ok, document} ->
-        update_payload = %{
-          id: document.id,
-          patch: patch,
-          sync_revision: document.sync_revision,
-          content_hash: document.content_hash
-        }
-
-        broadcast_except(socket, "document_updated", update_payload)
-        maybe_broadcast_public(socket, document, "document_updated", update_payload)
-
         {:reply, {:ok, %{sync_revision: document.sync_revision}}, socket}
 
       {:error, :hash_mismatch, current} ->
@@ -146,18 +142,17 @@ defmodule ReplicantServer.Sync.Channel do
   # Delete Document
   # ============================================================================
 
+  # Documents.delete_document broadcasts "document_deleted" to sync:user (and
+  # sync:public, when public) itself, excluding this channel's own pid via
+  # :broadcast_from — no separate broadcast_except/maybe_broadcast_public
+  # call is needed here.
   @impl true
   def handle_in("delete_document", payload, socket) do
     user_id = socket.assigns.user_id
     document_id = payload["id"]
 
-    case Documents.delete_document(user_id, document_id) do
-      {:ok, document} ->
-        delete_payload = %{id: document_id}
-
-        broadcast_except(socket, "document_deleted", delete_payload)
-        maybe_broadcast_public(socket, document, "document_deleted", delete_payload)
-
+    case Documents.delete_document(user_id, document_id, broadcast_from: self()) do
+      {:ok, _document} ->
         {:reply, :ok, socket}
 
       {:error, :not_found} ->
@@ -292,10 +287,6 @@ defmodule ReplicantServer.Sync.Channel do
   # ============================================================================
   # Helpers
   # ============================================================================
-
-  defp broadcast_except(socket, event, payload) do
-    broadcast_from!(socket, event, payload)
-  end
 
   # Publicly visible documents fan out to the sync:public topic in addition
   # to the owner's topic, so public-catalog subscribers stay current.
