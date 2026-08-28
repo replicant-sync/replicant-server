@@ -119,6 +119,18 @@ defmodule ReplicantServer.DocumentsTest do
       assert updated.sync_revision == 2
     end
 
+    test "rejects nil content_hash", %{user: user} do
+      {:ok, doc} =
+        Documents.create_document(user.id, %{
+          id: UUID.uuid4(),
+          content: %{"title" => "Original"}
+        })
+
+      patch = [%{"op" => "replace", "path" => "/title", "value" => "Updated"}]
+
+      assert {:error, :missing_hash} = Documents.update_document(user.id, doc.id, patch, nil)
+    end
+
     test "fails on hash mismatch", %{user: user} do
       {:ok, doc} =
         Documents.create_document(user.id, %{
@@ -307,6 +319,62 @@ defmodule ReplicantServer.DocumentsTest do
 
       assert Documents.verify_hash(content, hash)
       refute Documents.verify_hash(%{"other" => "data"}, hash)
+    end
+
+    test "canonical encoding matches plain Jason.encode!/1 for small (<=32 key) maps" do
+      content = %{
+        "type" => "tuning",
+        "title" => "Interop",
+        "zeta" => 1,
+        "alpha" => %{"nested_z" => [1, 2, 3], "nested_a" => "x"},
+        "pitches" => ["1/1", "9/8", "5/4"],
+        "referenceFrequency" => 261.626
+      }
+
+      legacy_hash =
+        content
+        |> Jason.encode!()
+        |> then(&:crypto.hash(:sha256, &1))
+        |> Base.encode16(case: :lower)
+
+      assert Documents.compute_hash(content) == legacy_hash
+    end
+
+    test "pins the exact hash for a fixed >32-key map with mixed float magnitudes and a non-ASCII key/value (HAMT-backed, exercises canonical sort + serde_json/ryu float parity)" do
+      content =
+        for i <- 1..35, into: %{} do
+          {"field_#{String.pad_leading(Integer.to_string(i), 2, "0")}", i}
+        end
+        |> Map.put("whole", 1.0)
+        |> Map.put("large", 1.0e10)
+        |> Map.put("small", 1.0e-7)
+        |> Map.put("tenth", 0.1)
+        |> Map.put("negative", -2.5)
+        |> Map.put("unicode_key_🎵", "café résumé 音楽")
+        |> Map.put("nested", %{
+          "z" => [3, 2, 1],
+          "a" => "x",
+          "deep" => %{"tags" => ["b", "a", "c"]}
+        })
+
+      assert map_size(content) == 42
+
+      assert Documents.compute_hash(content) ==
+               "7d0576a13a06288152611ed9957f3679e33c1e4f3c44c585b09f17c2521e995a"
+    end
+
+    test "pins the exact hash for a nested >32-key object inside a normal-sized parent (recursion into HAMT at depth)" do
+      child =
+        for i <- 1..40, into: %{} do
+          {"child_field_#{String.pad_leading(Integer.to_string(i), 2, "0")}", i}
+        end
+
+      content = %{"title" => "Parent Doc", "count" => 3, "child" => child}
+
+      assert map_size(child) == 40
+
+      assert Documents.compute_hash(content) ==
+               "4460584450427fd9acbd2d2ecc56eb8fb11b40f96eef23172bb1a3655fca2026"
     end
   end
 

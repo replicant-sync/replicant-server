@@ -25,6 +25,16 @@ defmodule ReplicantServer.Documents do
     )
   end
 
+  @doc """
+  Gets a document by ID if owned by user, including soft-deleted documents.
+  """
+  def get_user_document_any(user_id, document_id) do
+    Repo.one(
+      from d in Document,
+        where: d.id == ^document_id and d.user_id == ^user_id
+    )
+  end
+
   @allowed_sort_fields ~w(title size_bytes sync_revision updated_at created_at)a
 
   @doc """
@@ -125,17 +135,19 @@ defmodule ReplicantServer.Documents do
   The patch should be a JSON Patch (RFC 6902) operation list.
   Validates that the client's content_hash matches the current document's hash
   to ensure the client was working with the correct base content.
-  Returns `{:ok, document}` or `{:error, :hash_mismatch, current_doc}` or `{:error, reason}`.
+  A nil content_hash is rejected rather than treated as "skip the check".
+  Returns `{:ok, document}`, `{:error, :hash_mismatch, current_doc}`,
+  `{:error, :missing_hash}`, or `{:error, reason}`.
   """
+  def update_document(_user_id, _document_id, _patch, nil), do: {:error, :missing_hash}
+
   def update_document(user_id, document_id, patch, content_hash) do
     case get_user_document(user_id, document_id) do
       nil ->
         {:error, :not_found}
 
       document ->
-        current_hash = document.content_hash
-
-        if content_hash != nil and current_hash != content_hash do
+        if document.content_hash != content_hash do
           {:error, :hash_mismatch, document}
         else
           apply_update(document, patch)
@@ -259,15 +271,120 @@ defmodule ReplicantServer.Documents do
 
   @doc """
   Computes SHA256 hash of content for verification.
+
+  Encodes with explicit key-sorted, compact JSON at every nesting level
+  (`canonical_json/1`) rather than relying on `Jason.encode!/1`'s default map
+  iteration order. Erlang's small maps (<=32 keys) happen to iterate in
+  sorted term order already, so this is byte-identical to the previous plain
+  `Jason.encode!/1` call for such maps and existing stored `content_hash`
+  values remain valid. Maps larger than 32 keys switch to an unordered HAMT
+  representation, where the old approach could silently disagree with the
+  Rust client's `BTreeMap`-backed encoder; explicit sorting fixes that case.
   """
   def compute_hash(content) when is_map(content) do
     content
-    |> Jason.encode!()
+    |> canonical_json()
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
   end
 
   def compute_hash(_), do: nil
+
+  defp canonical_json(value) when is_map(value) do
+    value
+    |> Enum.map(fn {k, v} -> {to_string(k), canonical_json(v)} end)
+    |> Enum.sort_by(&elem(&1, 0))
+    |> Enum.map_join(",", fn {k, v} -> "#{Jason.encode!(k)}:#{v}" end)
+    |> then(&"{#{&1}}")
+  end
+
+  defp canonical_json(value) when is_list(value) do
+    value
+    |> Enum.map(&canonical_json/1)
+    |> Enum.join(",")
+    |> then(&"[#{&1}]")
+  end
+
+  defp canonical_json(value) when is_float(value), do: format_float(value)
+
+  defp canonical_json(value), do: Jason.encode!(value)
+
+  # Renders a float exactly as Rust's `ryu` crate does (what serde_json uses
+  # for every f64), so document hashes agree across languages at magnitudes
+  # where Jason's own formatter (`1.0e10`, `1.0e-7`, ...) disagrees with
+  # serde_json (`10000000000.0`, `1e-7`, ...). Sources the shortest
+  # round-trip digit string from `:erlang.float_to_binary/2`'s `:short` mode
+  # (the same class of algorithm ryu implements) and re-renders it using
+  # ryu's exact fixed/scientific notation switch
+  # (see ryu's src/pretty/mod.rs `format64`).
+  defp format_float(value) do
+    erlang_short = value |> :erlang.float_to_binary([:short]) |> to_string()
+
+    if value == 0.0 do
+      if String.starts_with?(erlang_short, "-"), do: "-0.0", else: "0.0"
+    else
+      {sign, int_part, frac_part, exp} = parse_short_float(erlang_short)
+      digits_all = int_part <> frac_part
+      exponent = exp - String.length(frac_part)
+
+      digits_no_leading = String.trim_leading(digits_all, "0")
+      digits_no_leading = if digits_no_leading == "", do: "0", else: digits_no_leading
+
+      {digits, k} = strip_trailing_zeros(digits_no_leading, exponent)
+      length = String.length(digits)
+      kk = length + k
+
+      render_ryu(sign, digits, length, k, kk)
+    end
+  end
+
+  defp parse_short_float(str) do
+    {sign, rest} =
+      case str do
+        "-" <> r -> {"-", r}
+        r -> {"", r}
+      end
+
+    [mantissa, exp_str] =
+      case String.split(rest, "e", parts: 2) do
+        [m] -> [m, "0"]
+        [m, e] -> [m, e]
+      end
+
+    [int_part, frac_part] = String.split(mantissa, ".", parts: 2)
+    {sign, int_part, frac_part, String.to_integer(exp_str)}
+  end
+
+  defp strip_trailing_zeros(digits, exponent) do
+    trimmed = String.trim_trailing(digits, "0")
+    trimmed = if trimmed == "", do: "0", else: trimmed
+    {trimmed, exponent + (String.length(digits) - String.length(trimmed))}
+  end
+
+  # Mirrors ryu's `format64` branch-for-branch: fixed notation with trailing
+  # ".0" for whole numbers, fixed with an interior decimal point, fixed with
+  # leading zeros for small fractions, or scientific notation outside that
+  # range.
+  defp render_ryu(sign, digits, length, k, kk) do
+    cond do
+      k >= 0 and kk <= 16 ->
+        sign <> digits <> String.duplicate("0", kk - length) <> ".0"
+
+      kk > 0 and kk <= 16 ->
+        {int_digits, frac_digits} = String.split_at(digits, kk)
+        sign <> int_digits <> "." <> frac_digits
+
+      kk > -5 and kk <= 0 ->
+        sign <> "0." <> String.duplicate("0", -kk) <> digits
+
+      length == 1 ->
+        sign <> digits <> "e" <> Integer.to_string(kk - 1)
+
+      true ->
+        {first, rest} = String.split_at(digits, 1)
+        sign <> first <> "." <> rest <> "e" <> Integer.to_string(kk - 1)
+    end
+  end
 
   @doc """
   Verifies content matches expected hash.
@@ -399,6 +516,16 @@ defmodule ReplicantServer.Documents do
     Repo.one(
       from d in Document,
         where: d.id == ^id and d.visibility == "public" and is_nil(d.deleted_at)
+    )
+  end
+
+  @doc """
+  Gets a public document by ID, including soft-deleted documents.
+  """
+  def get_public_document_any(id) do
+    Repo.one(
+      from d in Document,
+        where: d.id == ^id and d.visibility == "public"
     )
   end
 

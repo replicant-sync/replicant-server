@@ -132,6 +132,9 @@ defmodule ReplicantServer.Sync.Channel do
       {:error, :not_found} ->
         {:reply, {:error, %{reason: "not_found"}}, socket}
 
+      {:error, :missing_hash} ->
+        {:reply, {:error, %{reason: "missing_hash"}}, socket}
+
       {:error, reason} ->
         {:reply, {:error, %{reason: to_string(reason)}}, socket}
     end
@@ -191,6 +194,35 @@ defmodule ReplicantServer.Sync.Channel do
       end)
 
     {:reply, {:ok, %{documents: doc_list, latest_sequence: latest_sequence}}, socket}
+  end
+
+  # ============================================================================
+  # Get Document (targeted resync)
+  # ============================================================================
+
+  @impl true
+  def handle_in("get_document", %{"id" => document_id}, socket) do
+    user_id = socket.assigns.user_id
+
+    document =
+      Documents.get_user_document_any(user_id, document_id) ||
+        Documents.get_public_document_any(document_id)
+
+    case document do
+      nil ->
+        {:reply, {:error, %{reason: "not_found"}}, socket}
+
+      document ->
+        {:reply,
+         {:ok,
+          %{
+            id: document.id,
+            content: document.content,
+            sync_revision: document.sync_revision,
+            content_hash: document.content_hash,
+            deleted: document.deleted_at != nil
+          }}, socket}
+    end
   end
 
   # ============================================================================
