@@ -29,6 +29,22 @@ defmodule ReplicantServer.Sync.ChannelTest do
     |> ReplicantServer.Repo.insert()
   end
 
+  defp mint_other_user_context do
+    email = "other-#{System.unique_integer([:positive])}@example.com"
+    {:ok, user} = ReplicantServer.Accounts.get_or_create_user(email)
+    {:ok, credential} = mint_credential_for(user)
+    timestamp = System.system_time(:second)
+    signature = Auth.create_signature(credential.secret, timestamp, email, credential.api_key)
+
+    %{
+      credential: credential,
+      email: email,
+      user_id: user.id,
+      timestamp: timestamp,
+      signature: signature
+    }
+  end
+
   defp join_user_channel(context) do
     {:ok, _reply, socket} =
       socket(ReplicantServer.Sync.Socket, "user_socket", %{})
@@ -427,6 +443,41 @@ defmodule ReplicantServer.Sync.ChannelTest do
       ref = push(socket, "get_document", %{"id" => doc_id})
 
       assert_reply ref, :ok, %{id: ^doc_id, deleted: true}
+    end
+
+    test "returns not_found for another user's private document", %{doc_id: doc_id} do
+      other_socket = join_user_channel(mint_other_user_context())
+
+      ref = push(other_socket, "get_document", %{"id" => doc_id})
+
+      assert_reply ref, :error, %{reason: "not_found"}
+    end
+
+    test "returns a public document owned by another user", %{socket: socket} do
+      owner_context = mint_other_user_context()
+
+      {:ok, doc} =
+        ReplicantServer.Documents.create_document(owner_context.user_id, %{
+          "id" => UUID.uuid4(),
+          "content" => %{"title" => "Public tuning"}
+        })
+
+      {:ok, doc} =
+        doc
+        |> Ecto.Changeset.change(visibility: "public")
+        |> ReplicantServer.Repo.update()
+
+      ref = push(socket, "get_document", %{"id" => doc.id})
+      doc_id = doc.id
+      doc_hash = doc.content_hash
+
+      assert_reply ref, :ok, %{
+        id: ^doc_id,
+        content: %{"title" => "Public tuning"},
+        sync_revision: 1,
+        content_hash: ^doc_hash,
+        deleted: false
+      }
     end
   end
 
