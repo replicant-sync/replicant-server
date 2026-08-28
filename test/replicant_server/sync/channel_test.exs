@@ -381,6 +381,55 @@ defmodule ReplicantServer.Sync.ChannelTest do
     end
   end
 
+  describe "get_document" do
+    setup context do
+      socket = join_user_channel(context)
+
+      doc_id = UUID.uuid4()
+
+      ref =
+        push(socket, "create_document", %{
+          "id" => doc_id,
+          "content" => %{"title" => "Test"}
+        })
+
+      assert_reply ref, :ok, %{content_hash: content_hash}
+
+      %{socket: socket, doc_id: doc_id, content_hash: content_hash}
+    end
+
+    test "returns the document with content, revision, and hash", %{
+      socket: socket,
+      doc_id: doc_id,
+      content_hash: content_hash
+    } do
+      ref = push(socket, "get_document", %{"id" => doc_id})
+
+      assert_reply ref, :ok, %{
+        id: ^doc_id,
+        content: %{"title" => "Test"},
+        sync_revision: 1,
+        content_hash: ^content_hash,
+        deleted: false
+      }
+    end
+
+    test "returns not_found for an unknown id", %{socket: socket} do
+      ref = push(socket, "get_document", %{"id" => Ecto.UUID.generate()})
+
+      assert_reply ref, :error, %{reason: "not_found"}
+    end
+
+    test "returns deleted: true for a soft-deleted document", %{socket: socket, doc_id: doc_id} do
+      ref = push(socket, "delete_document", %{"id" => doc_id})
+      assert_reply ref, :ok
+
+      ref = push(socket, "get_document", %{"id" => doc_id})
+
+      assert_reply ref, :ok, %{id: ^doc_id, deleted: true}
+    end
+  end
+
   describe "get_changes_since" do
     setup context do
       socket = join_user_channel(context)
