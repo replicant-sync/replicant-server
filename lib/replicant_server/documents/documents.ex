@@ -135,17 +135,19 @@ defmodule ReplicantServer.Documents do
   The patch should be a JSON Patch (RFC 6902) operation list.
   Validates that the client's content_hash matches the current document's hash
   to ensure the client was working with the correct base content.
-  Returns `{:ok, document}` or `{:error, :hash_mismatch, current_doc}` or `{:error, reason}`.
+  A nil content_hash is rejected rather than treated as "skip the check".
+  Returns `{:ok, document}`, `{:error, :hash_mismatch, current_doc}`,
+  `{:error, :missing_hash}`, or `{:error, reason}`.
   """
+  def update_document(_user_id, _document_id, _patch, nil), do: {:error, :missing_hash}
+
   def update_document(user_id, document_id, patch, content_hash) do
     case get_user_document(user_id, document_id) do
       nil ->
         {:error, :not_found}
 
       document ->
-        current_hash = document.content_hash
-
-        if content_hash != nil and current_hash != content_hash do
+        if document.content_hash != content_hash do
           {:error, :hash_mismatch, document}
         else
           apply_update(document, patch)

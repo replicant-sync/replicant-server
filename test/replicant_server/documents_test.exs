@@ -119,6 +119,18 @@ defmodule ReplicantServer.DocumentsTest do
       assert updated.sync_revision == 2
     end
 
+    test "rejects nil content_hash", %{user: user} do
+      {:ok, doc} =
+        Documents.create_document(user.id, %{
+          id: UUID.uuid4(),
+          content: %{"title" => "Original"}
+        })
+
+      patch = [%{"op" => "replace", "path" => "/title", "value" => "Updated"}]
+
+      assert {:error, :missing_hash} = Documents.update_document(user.id, doc.id, patch, nil)
+    end
+
     test "fails on hash mismatch", %{user: user} do
       {:ok, doc} =
         Documents.create_document(user.id, %{

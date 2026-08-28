@@ -132,6 +132,9 @@ defmodule ReplicantServer.Sync.Channel do
       {:error, :not_found} ->
         {:reply, {:error, %{reason: "not_found"}}, socket}
 
+      {:error, :missing_hash} ->
+        {:reply, {:error, %{reason: "missing_hash"}}, socket}
+
       {:error, reason} ->
         {:reply, {:error, %{reason: to_string(reason)}}, socket}
     end

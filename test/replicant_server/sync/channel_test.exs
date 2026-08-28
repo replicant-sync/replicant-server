@@ -285,6 +285,17 @@ defmodule ReplicantServer.Sync.ChannelTest do
 
       assert_reply ref, :error, %{reason: "hash_mismatch", current_revision: 1}
     end
+
+    test "returns missing_hash when content_hash is nil", %{socket: socket, doc_id: doc_id} do
+      ref =
+        push(socket, "update_document", %{
+          "id" => doc_id,
+          "patch" => [%{op: "replace", path: "/title", value: "Updated"}],
+          "content_hash" => nil
+        })
+
+      assert_reply ref, :error, %{reason: "missing_hash"}
+    end
   end
 
   describe "owned public documents" do
