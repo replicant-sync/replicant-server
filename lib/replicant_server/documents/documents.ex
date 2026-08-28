@@ -56,9 +56,14 @@ defmodule ReplicantServer.Documents do
   @doc """
   Creates a document with event logging in a transaction.
 
+  `opts` may include `:broadcast_from` — a pid to exclude from the
+  `sync:user:*` broadcast (the calling channel process, so the creating
+  client doesn't receive its own document_created back). Web/LiveView
+  callers omit it and every connected sync client is notified.
+
   Returns `{:ok, document}` or `{:error, reason}` or `{:error, :conflict, existing_doc}`.
   """
-  def create_document(user_id, attrs) do
+  def create_document(user_id, attrs, opts \\ []) do
     document_id = attrs[:id] || attrs["id"]
     content = attrs[:content] || attrs["content"]
     content_hash = compute_hash(content)
@@ -108,7 +113,8 @@ defmodule ReplicantServer.Documents do
                 sync_revision: document.sync_revision,
                 content_hash: document.content_hash
               }
-              |> Map.merge(envelope_fields(document))
+              |> Map.merge(envelope_fields(document)),
+              opts
             )
 
             {:ok, document}
@@ -721,12 +727,16 @@ defmodule ReplicantServer.Documents do
     Phoenix.PubSub.broadcast(ReplicantServer.PubSub, topic, message)
   end
 
-  defp broadcast_to_sync_clients(topic, event, payload) do
-    Phoenix.PubSub.broadcast(
-      ReplicantServer.PubSub,
-      topic,
-      %Phoenix.Socket.Broadcast{topic: topic, event: event, payload: payload}
-    )
+  defp broadcast_to_sync_clients(topic, event, payload, opts \\ []) do
+    message = %Phoenix.Socket.Broadcast{topic: topic, event: event, payload: payload}
+
+    case Keyword.get(opts, :broadcast_from) do
+      nil ->
+        Phoenix.PubSub.broadcast(ReplicantServer.PubSub, topic, message)
+
+      from_pid ->
+        Phoenix.PubSub.broadcast_from(ReplicantServer.PubSub, from_pid, topic, message)
+    end
   end
 
   @doc """

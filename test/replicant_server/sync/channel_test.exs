@@ -242,6 +242,48 @@ defmodule ReplicantServer.Sync.ChannelTest do
     end
   end
 
+  describe "create_document self-echo" do
+    test "creator does not receive its own document_created push, other device does", context do
+      socket = join_user_channel(context)
+      test_pid = self()
+
+      other_device =
+        Task.async(fn ->
+          {:ok, _reply, _socket} =
+            socket(ReplicantServer.Sync.Socket, "user_socket", %{}, test_process: test_pid)
+            |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{context.user_id}", %{
+              "email" => context.email,
+              "api_key" => context.credential.api_key,
+              "signature" => context.signature,
+              "timestamp" => context.timestamp
+            })
+
+          send(test_pid, :joined)
+
+          assert_push "document_created", payload
+          payload
+        end)
+
+      receive do
+        :joined -> :ok
+      end
+
+      doc_id = UUID.uuid4()
+
+      ref =
+        push(socket, "create_document", %{
+          "id" => doc_id,
+          "content" => %{"title" => "Multi-device"}
+        })
+
+      assert_reply ref, :ok, %{id: ^doc_id}
+
+      refute_push "document_created", %{}
+
+      assert %{id: ^doc_id} = Task.await(other_device)
+    end
+  end
+
   describe "update_document" do
     setup context do
       socket = join_user_channel(context)

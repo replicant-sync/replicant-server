@@ -52,12 +52,15 @@ defmodule ReplicantServer.Sync.Channel do
   # Create Document
   # ============================================================================
 
+  # Documents.create_document broadcasts "document_created" to sync:user
+  # itself (excluding this channel's own pid via :broadcast_from), so no
+  # separate broadcast_except call is needed here.
   @impl true
   def handle_in("create_document", payload, socket) do
     user_id = socket.assigns.user_id
     payload = Map.drop(payload, ["author_name", "visibility", "provenance", "user_id"])
 
-    case Documents.create_document(user_id, payload) do
+    case Documents.create_document(user_id, payload, broadcast_from: self()) do
       {:ok, document} ->
         payload =
           %{
@@ -68,7 +71,6 @@ defmodule ReplicantServer.Sync.Channel do
           }
           |> Map.merge(Documents.envelope_fields(document))
 
-        broadcast_except(socket, "document_created", payload)
         maybe_broadcast_public(socket, document, "document_created", payload)
 
         {:reply,
