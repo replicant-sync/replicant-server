@@ -259,15 +259,41 @@ defmodule ReplicantServer.Documents do
 
   @doc """
   Computes SHA256 hash of content for verification.
+
+  Encodes with explicit key-sorted, compact JSON at every nesting level
+  (`canonical_json/1`) rather than relying on `Jason.encode!/1`'s default map
+  iteration order. Erlang's small maps (<=32 keys) happen to iterate in
+  sorted term order already, so this is byte-identical to the previous plain
+  `Jason.encode!/1` call for such maps and existing stored `content_hash`
+  values remain valid. Maps larger than 32 keys switch to an unordered HAMT
+  representation, where the old approach could silently disagree with the
+  Rust client's `BTreeMap`-backed encoder; explicit sorting fixes that case.
   """
   def compute_hash(content) when is_map(content) do
     content
-    |> Jason.encode!()
+    |> canonical_json()
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
   end
 
   def compute_hash(_), do: nil
+
+  defp canonical_json(value) when is_map(value) do
+    value
+    |> Enum.map(fn {k, v} -> {to_string(k), canonical_json(v)} end)
+    |> Enum.sort_by(&elem(&1, 0))
+    |> Enum.map_join(",", fn {k, v} -> "#{Jason.encode!(k)}:#{v}" end)
+    |> then(&"{#{&1}}")
+  end
+
+  defp canonical_json(value) when is_list(value) do
+    value
+    |> Enum.map(&canonical_json/1)
+    |> Enum.join(",")
+    |> then(&"[#{&1}]")
+  end
+
+  defp canonical_json(value), do: Jason.encode!(value)
 
   @doc """
   Verifies content matches expected hash.

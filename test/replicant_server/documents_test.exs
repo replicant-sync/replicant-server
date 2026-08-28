@@ -308,6 +308,38 @@ defmodule ReplicantServer.DocumentsTest do
       assert Documents.verify_hash(content, hash)
       refute Documents.verify_hash(%{"other" => "data"}, hash)
     end
+
+    test "canonical encoding matches plain Jason.encode!/1 for small (<=32 key) maps" do
+      content = %{
+        "type" => "tuning",
+        "title" => "Interop",
+        "zeta" => 1,
+        "alpha" => %{"nested_z" => [1, 2, 3], "nested_a" => "x"},
+        "pitches" => ["1/1", "9/8", "5/4"],
+        "referenceFrequency" => 261.626
+      }
+
+      legacy_hash =
+        content
+        |> Jason.encode!()
+        |> then(&:crypto.hash(:sha256, &1))
+        |> Base.encode16(case: :lower)
+
+      assert Documents.compute_hash(content) == legacy_hash
+    end
+
+    test "pins the exact hash for a fixed >32-key map (HAMT-backed, exercises canonical sort)" do
+      content =
+        for i <- 1..40, into: %{} do
+          {"field_#{String.pad_leading(Integer.to_string(i), 2, "0")}", i}
+        end
+        |> Map.put("nested", %{"z" => [3, 2, 1], "a" => "x"})
+
+      assert map_size(content) == 41
+
+      assert Documents.compute_hash(content) ==
+               "ba2c7915e2e34f290b80ad1b2c90e9d7b552fa22f380caa890a076a1444a2f7e"
+    end
   end
 
   describe "envelope attribution" do
