@@ -40,14 +40,7 @@ replicant_server-*.tar
 config/deploy.yml
 
 # Claude Code local session/handoff state (never commit)
-.claude/session-state.md
-.claude/handoff-consent
-.claude/handoff-*
-.claude/context.md
-.claude/current-task.md
-.claude/current-bug.md
-.claude/bug-test-log.md
-.claude/task-history.md
-.claude/recent-prompts.md
-.claude/mode
-.claude/worktrees/
+.claude/
+
+# Local docs/notes (never commit)
+docs/
