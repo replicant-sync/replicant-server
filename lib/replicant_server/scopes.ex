@@ -25,6 +25,20 @@ defmodule ReplicantServer.Scopes do
 
   def resolve(_scope, _user_id), do: {:error, :subscription_forbidden}
 
+  @doc """
+  Whether a live publication is readable by `user_id`: it must belong to at
+  least one collection that is public or owned by the caller, mirroring the
+  collections `resolve/2` would let them subscribe to.
+  """
+  def readable_publication?(document_id, user_id) do
+    Repo.exists?(
+      from m in CollectionMember,
+        join: c in Collection,
+        on: c.id == m.collection_id,
+        where: m.document_id == ^document_id and (c.access == "public" or c.owner_id == ^user_id)
+    )
+  end
+
   def to_wire("own:" <> _user_id), do: "own"
   def to_wire(scope), do: scope
 

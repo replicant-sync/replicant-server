@@ -92,7 +92,11 @@ defmodule ReplicantServer.Sync.Protocol do
   end
 
   defp readable?(%Document{user_id: user_id}, user_id), do: true
-  defp readable?(%Document{read_only: true}, _user_id), do: true
+  defp readable?(%Document{read_only: true, deleted_at: %DateTime{}}, _user_id), do: true
+
+  defp readable?(%Document{read_only: true, id: id}, user_id),
+    do: Scopes.readable_publication?(id, user_id)
+
   defp readable?(_doc, _user_id), do: false
 
   defp safe_doc_id(%{"doc_id" => doc_id}) when is_binary(doc_id), do: doc_id
