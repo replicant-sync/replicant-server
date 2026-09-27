@@ -28,6 +28,10 @@ defmodule ReplicantServer.Sync.Channel do
     with_scope(params, socket, &Protocol.changes_since(&1, &2, params))
   end
 
+  def handle_in("get_snapshot", params, socket) do
+    with_scope(params, socket, &Protocol.snapshot(&1, &2, params))
+  end
+
   def handle_in(_event, _params, socket) do
     {:reply, {:error, Envelope.error("validation")}, socket}
   end

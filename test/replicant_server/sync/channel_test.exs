@@ -151,5 +151,12 @@ defmodule ReplicantServer.Sync.ChannelTest do
       ref = Phoenix.ChannelTest.push(socket, "get_changes_since", %{"cursor" => 0})
       assert_reply ref, :error, %{code: "validation"}
     end
+
+    test "get_snapshot replies and subscribes the scope", %{ctx: ctx, socket: socket} do
+      ref = Phoenix.ChannelTest.push(socket, "get_snapshot", %{"scope" => "own"})
+      assert_reply ref, :ok, %{docs: [], snapshot_seq: _, next_page_token: nil}
+      {:ok, _} = Documents.create_document(ctx.user.id, %{id: Ecto.UUID.generate(), content: %{}})
+      assert_push "change", %{scope: "own", kind: "upsert"}
+    end
   end
 end

@@ -3,11 +3,12 @@ defmodule ReplicantServer.Sync.Protocol do
 
   import Ecto.Query
 
-  alias ReplicantServer.{Feed, Repo}
+  alias ReplicantServer.{Feed, Repo, Scopes}
   alias ReplicantServer.Documents.Document
   alias ReplicantServer.Sync.Envelope
 
   @max_page 500
+  @snapshot_page 200
 
   def changes_since(scope_key, wire_scope, %{"cursor" => cursor} = params)
       when is_integer(cursor) and cursor >= 0 do
@@ -33,6 +34,42 @@ defmodule ReplicantServer.Sync.Protocol do
 
   defp page_limit(limit) when is_integer(limit) and limit > 0, do: min(limit, @max_page)
   defp page_limit(_limit), do: @max_page
+
+  def snapshot(scope_key, wire_scope, params, page_size \\ @snapshot_page) do
+    case decode_token(params["page_token"]) do
+      {:ok, nil} ->
+        {:ok, snapshot_seq} = Repo.transaction(fn -> Feed.head(scope_key) end)
+        {:ok, snapshot_page(scope_key, snapshot_seq, nil, page_size)}
+
+      {:ok, {snapshot_seq, after_id}} ->
+        {:ok, snapshot_page(scope_key, snapshot_seq, after_id, page_size)}
+
+      :error ->
+        {:error, Envelope.error("validation", %{scope: wire_scope})}
+    end
+  end
+
+  defp snapshot_page(scope_key, snapshot_seq, after_id, page_size) do
+    query = Scopes.documents_query(scope_key)
+    query = if after_id, do: from(d in query, where: d.id > ^after_id), else: query
+    docs = Repo.all(from d in query, order_by: d.id, limit: ^page_size)
+    next = if length(docs) == page_size, do: "#{snapshot_seq}:#{List.last(docs).id}"
+    %{docs: Enum.map(docs, &Envelope.doc/1), snapshot_seq: snapshot_seq, next_page_token: next}
+  end
+
+  defp decode_token(nil), do: {:ok, nil}
+
+  defp decode_token(token) when is_binary(token) do
+    with [seq, id] <- String.split(token, ":", parts: 2),
+         {seq, ""} <- Integer.parse(seq),
+         {:ok, id} <- Ecto.UUID.cast(id) do
+      {:ok, {seq, id}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp decode_token(_token), do: :error
 
   defp load_docs([]), do: %{}
 
