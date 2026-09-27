@@ -102,6 +102,11 @@ defmodule ReplicantServer.Sync.Protocol do
   defp safe_doc_id(%{"doc_id" => doc_id}) when is_binary(doc_id), do: doc_id
   defp safe_doc_id(_params), do: nil
 
+  def publication_reply({:ok, %Document{} = pub}), do: {:ok, Envelope.doc(pub)}
+  def publication_reply({:error, :not_found}), do: {:error, Envelope.error("not_found")}
+  def publication_reply({:error, :forbidden}), do: {:error, Envelope.error("forbidden")}
+  def publication_reply(_result), do: {:error, Envelope.error("internal")}
+
   defp load_docs([]), do: %{}
 
   defp load_docs(ids) do

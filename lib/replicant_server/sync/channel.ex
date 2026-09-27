@@ -3,7 +3,7 @@ defmodule ReplicantServer.Sync.Channel do
 
   use Phoenix.Channel
 
-  alias ReplicantServer.{Auth, Feed, Scopes}
+  alias ReplicantServer.{Auth, Feed, Publications, Scopes}
   alias ReplicantServer.Sync.{Envelope, Protocol, Upload}
 
   require Logger
@@ -38,6 +38,20 @@ defmodule ReplicantServer.Sync.Channel do
 
   def handle_in("get_document", params, socket) do
     {:reply, Protocol.get_document(socket.assigns.user_id, params), socket}
+  end
+
+  def handle_in("publish", %{"source_doc_id" => id}, socket) when is_binary(id) do
+    {:reply, Protocol.publication_reply(Publications.publish(socket.assigns.user_id, id)), socket}
+  end
+
+  def handle_in("publish_update", %{"publication_id" => id}, socket) when is_binary(id) do
+    {:reply, Protocol.publication_reply(Publications.publish_update(socket.assigns.user_id, id)),
+     socket}
+  end
+
+  def handle_in("unpublish", %{"publication_id" => id}, socket) when is_binary(id) do
+    {:reply, Protocol.publication_reply(Publications.unpublish(socket.assigns.user_id, id)),
+     socket}
   end
 
   def handle_in(_event, _params, socket) do

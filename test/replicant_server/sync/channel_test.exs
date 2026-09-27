@@ -197,4 +197,43 @@ defmodule ReplicantServer.Sync.ChannelTest do
       }
     end
   end
+
+  describe "publication RPCs" do
+    test "publish replies with the publication; unknown ids are not_found", %{ctx: ctx} do
+      {:ok, _, socket} = join_sync(ctx)
+
+      {:ok, source} =
+        Documents.create_document(ctx.user.id, %{id: Ecto.UUID.generate(), content: %{"t" => 1}})
+
+      source_id = source.id
+
+      ref = Phoenix.ChannelTest.push(socket, "publish", %{"source_doc_id" => source.id})
+      assert_reply ref, :ok, %{read_only: true, source_doc_id: ^source_id, doc_id: pub_id}
+
+      ref =
+        Phoenix.ChannelTest.push(socket, "unpublish", %{"publication_id" => Ecto.UUID.generate()})
+
+      assert_reply ref, :error, %{code: "not_found", is_fatal: false}
+
+      ref = Phoenix.ChannelTest.push(socket, "publish_update", %{"publication_id" => pub_id})
+      assert_reply ref, :ok, %{doc_id: ^pub_id}
+    end
+
+    test "a non-string id replies validation and does not crash the channel", %{ctx: ctx} do
+      {:ok, _, socket} = join_sync(ctx)
+
+      ref = Phoenix.ChannelTest.push(socket, "publish", %{"source_doc_id" => 123})
+      assert_reply ref, :error, %{code: "validation", is_fatal: false}
+
+      ref =
+        Phoenix.ChannelTest.push(socket, "publish_update", %{
+          "publication_id" => %{"nope" => true}
+        })
+
+      assert_reply ref, :error, %{code: "validation", is_fatal: false}
+
+      ref = Phoenix.ChannelTest.push(socket, "unpublish", %{})
+      assert_reply ref, :error, %{code: "validation", is_fatal: false}
+    end
+  end
 end
