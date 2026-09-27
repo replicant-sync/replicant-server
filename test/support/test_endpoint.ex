@@ -7,6 +7,9 @@ defmodule ReplicantServer.Sync.TestEndpoint do
   use Phoenix.Endpoint, otp_app: :replicant_server
 
   socket "/socket", ReplicantServer.Sync.Socket,
-    websocket: [check_origin: false],
+    websocket: [
+      check_origin: false,
+      error_handler: {ReplicantServer.Sync.Socket, :handle_error, []}
+    ],
     longpoll: false
 end

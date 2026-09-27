@@ -1,671 +1,82 @@
 defmodule ReplicantServer.Sync.ChannelTest do
   use ReplicantServer.Sync.ChannelCase
 
-  alias ReplicantServer.Auth
+  alias ReplicantServer.Sync.{Channel, Socket}
 
   setup do
-    email = "test@example.com"
-    {:ok, user} = ReplicantServer.Accounts.get_or_create_user(email)
-    {:ok, credential} = mint_credential_for(user)
-    timestamp = System.system_time(:second)
-    signature = Auth.create_signature(credential.secret, timestamp, email, credential.api_key)
-
-    %{
-      credential: credential,
-      email: email,
-      user_id: user.id,
-      timestamp: timestamp,
-      signature: signature
-    }
+    %{ctx: mint_user("channel@example.com")}
   end
 
-  defp mint_credential_for(user) do
-    creds = Auth.generate_credentials()
-
-    %ReplicantServer.Auth.ApiCredential{}
-    |> ReplicantServer.Auth.ApiCredential.changeset(
-      Map.merge(creds, %{name: "test-device", user_id: user.id})
-    )
-    |> ReplicantServer.Repo.insert()
-  end
-
-  defp mint_other_user_context do
-    email = "other-#{System.unique_integer([:positive])}@example.com"
-    {:ok, user} = ReplicantServer.Accounts.get_or_create_user(email)
-    {:ok, credential} = mint_credential_for(user)
-    timestamp = System.system_time(:second)
-    signature = Auth.create_signature(credential.secret, timestamp, email, credential.api_key)
-
-    %{
-      credential: credential,
-      email: email,
-      user_id: user.id,
-      timestamp: timestamp,
-      signature: signature
-    }
-  end
-
-  defp join_user_channel(context) do
-    {:ok, _reply, socket} =
-      socket(ReplicantServer.Sync.Socket, "user_socket", %{})
-      |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{context.user_id}", %{
-        "email" => context.email,
-        "api_key" => context.credential.api_key,
-        "signature" => context.signature,
-        "timestamp" => context.timestamp
-      })
-
-    socket
-  end
-
-  describe "join" do
-    test "authenticates and joins with valid credentials", %{
-      credential: cred,
-      email: email,
-      user_id: user_id,
-      timestamp: timestamp,
-      signature: signature
-    } do
-      {:ok, reply, socket} =
-        socket(ReplicantServer.Sync.Socket, "user_socket", %{})
-        |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{user_id}", %{
-          "email" => email,
-          "api_key" => cred.api_key,
-          "signature" => signature,
-          "timestamp" => timestamp
-        })
-
-      assert reply.user_id == user_id
-      assert socket.assigns.user_id == user_id
+  describe "socket connect" do
+    test "a v1 client (no protocol_version) is refused" do
+      assert {:error, :update_required} = connect(Socket, %{})
+      assert {:error, :update_required} = connect(Socket, %{"email" => "old@example.com"})
     end
 
-    test "rejects invalid signature", %{
-      credential: cred,
-      email: email,
-      user_id: user_id,
-      timestamp: timestamp
-    } do
-      assert {:error, %{reason: "invalid_signature"}} =
-               socket(ReplicantServer.Sync.Socket, "user_socket", %{})
-               |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{user_id}", %{
-                 "email" => email,
-                 "api_key" => cred.api_key,
-                 "signature" => "invalid_signature",
-                 "timestamp" => timestamp
-               })
+    test "a v2 client is accepted with its version and client id" do
+      client_id = Ecto.UUID.generate()
+
+      assert {:ok, socket} =
+               connect(Socket, %{"protocol_version" => "2", "client_id" => client_id})
+
+      assert socket.assigns.protocol_version == 2
+      assert socket.assigns.client_id == client_id
     end
 
-    test "rejects missing params" do
-      assert {:error, %{reason: "missing_params"}} =
-               socket(ReplicantServer.Sync.Socket, "user_socket", %{})
-               |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:public", %{})
+    test "a malformed client id is dropped" do
+      assert {:ok, socket} = connect(Socket, %{"protocol_version" => "2", "client_id" => "nope"})
+      assert socket.assigns.client_id == nil
     end
 
-    test "join on another user's topic is rejected", %{
-      credential: cred,
-      email: email,
-      timestamp: timestamp,
-      signature: signature
-    } do
-      assert {:error, %{reason: "topic_user_mismatch"}} =
-               socket(ReplicantServer.Sync.Socket, "user_socket", %{})
-               |> subscribe_and_join(
-                 ReplicantServer.Sync.Channel,
-                 "sync:user:#{Ecto.UUID.generate()}",
-                 %{
-                   "email" => email,
-                   "api_key" => cred.api_key,
-                   "signature" => signature,
-                   "timestamp" => timestamp
-                 }
-               )
+    test "any other protocol version gets update_required" do
+      assert {:error, :update_required} = connect(Socket, %{"protocol_version" => "3"})
+      assert {:error, :update_required} = connect(Socket, %{"protocol_version" => "not-a-number"})
     end
 
-    test "a credential with no user_id cannot resolve identity", %{timestamp: timestamp} do
-      {:ok, legacy} = Auth.create_credential("legacy-shared")
-      email = "anyone@example.com"
-      signature = Auth.create_signature(legacy.secret, timestamp, email, legacy.api_key)
-
-      assert {:error, %{reason: "credential_not_enrolled"}} =
-               socket(ReplicantServer.Sync.Socket, "user_socket", %{})
-               |> subscribe_and_join(
-                 ReplicantServer.Sync.Channel,
-                 "sync:user:#{Ecto.UUID.generate()}",
-                 %{
-                   "email" => email,
-                   "api_key" => legacy.api_key,
-                   "signature" => signature,
-                   "timestamp" => timestamp
-                 }
-               )
+    test "v1 topics have no route" do
+      assert Socket.__channel__("sync:user:abc") == nil
+      assert Socket.__channel__("sync:public") == nil
+      assert {Channel, _opts} = Socket.__channel__("sync:v2")
     end
 
-    test "a credential with no user_id cannot join sync:public", %{timestamp: timestamp} do
-      {:ok, legacy} = Auth.create_credential("legacy-shared")
-      email = "anyone@example.com"
-      signature = Auth.create_signature(legacy.secret, timestamp, email, legacy.api_key)
+    test "a refused connect over the real websocket transport path returns HTTP 426" do
+      conn =
+        build_conn()
+        |> put_req_header("connection", "upgrade")
+        |> put_req_header("upgrade", "websocket")
+        |> put_req_header("sec-websocket-version", "13")
+        |> put_req_header("sec-websocket-key", Base.encode64(:crypto.strong_rand_bytes(16)))
+        |> get("/socket/websocket")
 
-      assert {:error, %{reason: "credential_not_enrolled"}} =
-               socket(ReplicantServer.Sync.Socket, "user_socket", %{})
-               |> subscribe_and_join(
-                 ReplicantServer.Sync.Channel,
-                 "sync:public",
-                 %{
-                   "email" => email,
-                   "api_key" => legacy.api_key,
-                   "signature" => signature,
-                   "timestamp" => timestamp
-                 }
-               )
+      assert conn.status == 426
+      assert Jason.decode!(conn.resp_body) == %{"code" => "update_required", "is_fatal" => true}
     end
   end
 
-  describe "create_document" do
-    setup context do
-      %{socket: join_user_channel(context)}
+  describe "join sync:v2" do
+    test "authenticates and reports the protocol version", %{ctx: ctx} do
+      assert {:ok, reply, socket} = join_sync(ctx)
+      assert reply == %{user_id: ctx.user.id, protocol_version: 2}
+      assert socket.assigns.user_id == ctx.user.id
     end
 
-    test "creates document and broadcasts", %{socket: socket} do
-      doc_id = UUID.uuid4()
-
-      ref =
-        push(socket, "create_document", %{
-          "id" => doc_id,
-          "content" => %{"title" => "Test Document"}
-        })
-
-      assert_reply ref, :ok, %{id: ^doc_id, sync_revision: 1}
-      assert_broadcast "document_created", %{id: ^doc_id}
+    test "a bad signature gets auth_invalid (fatal)", %{ctx: ctx} do
+      params = %{auth_params(ctx) | "signature" => "bad"}
+      assert {:error, %{code: "auth_invalid", is_fatal: true}} = join_sync(ctx, params: params)
     end
 
-    test "create envelope carries attribution", %{socket: socket} do
-      doc_id = UUID.uuid4()
-
-      ref =
-        push(socket, "create_document", %{
-          "id" => doc_id,
-          "content" => %{"title" => "Attributed"}
-        })
-
-      # test@example.com has no display_name -> email local part
-      assert_reply ref, :ok, %{
-        id: ^doc_id,
-        author_name: "test",
-        visibility: "private",
-        provenance: %{}
-      }
-
-      assert_broadcast "document_created", %{
-        id: ^doc_id,
-        author_name: "test",
-        visibility: "private",
-        user_id: user_id
-      }
-
-      assert user_id != nil
+    test "an expired timestamp gets transient clock_skew", %{ctx: ctx} do
+      params = auth_params(ctx, System.system_time(:second) - 600)
+      assert {:error, %{code: "clock_skew", is_fatal: false}} = join_sync(ctx, params: params)
     end
 
-    test "ignores client-supplied attribution fields", %{socket: socket} do
-      doc_id = UUID.uuid4()
-
-      ref =
-        push(socket, "create_document", %{
-          "id" => doc_id,
-          "content" => %{"title" => "Spoofed"},
-          "visibility" => "public",
-          "author_name" => "Mallory",
-          "provenance" => %{"forged" => true},
-          "user_id" => Ecto.UUID.generate()
-        })
-
-      assert_reply ref, :ok, %{id: ^doc_id, author_name: "test", visibility: "private"}
+    test "missing credentials get auth_invalid", %{ctx: ctx} do
+      assert {:error, %{code: "auth_invalid"}} = join_sync(ctx, params: %{})
     end
 
-    test "returns conflict for duplicate ID", %{socket: socket} do
-      doc_id = UUID.uuid4()
-
-      ref1 =
-        push(socket, "create_document", %{
-          "id" => doc_id,
-          "content" => %{"title" => "First"}
-        })
-
-      assert_reply ref1, :ok, _
-
-      ref =
-        push(socket, "create_document", %{
-          "id" => doc_id,
-          "content" => %{"title" => "Second"}
-        })
-
-      assert_reply ref, :error, %{reason: "conflict", existing_id: ^doc_id}
-    end
-  end
-
-  describe "create_document self-echo" do
-    test "creator does not receive its own document_created push, other device does", context do
-      socket = join_user_channel(context)
-      test_pid = self()
-
-      other_device =
-        Task.async(fn ->
-          {:ok, _reply, _socket} =
-            socket(ReplicantServer.Sync.Socket, "user_socket", %{}, test_process: test_pid)
-            |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{context.user_id}", %{
-              "email" => context.email,
-              "api_key" => context.credential.api_key,
-              "signature" => context.signature,
-              "timestamp" => context.timestamp
-            })
-
-          send(test_pid, :joined)
-
-          assert_push "document_created", payload
-          payload
-        end)
-
-      receive do
-        :joined -> :ok
-      end
-
-      doc_id = UUID.uuid4()
-
-      ref =
-        push(socket, "create_document", %{
-          "id" => doc_id,
-          "content" => %{"title" => "Multi-device"}
-        })
-
-      assert_reply ref, :ok, %{id: ^doc_id}
-
-      refute_push "document_created", %{}
-
-      assert %{id: ^doc_id} = Task.await(other_device)
-    end
-  end
-
-  describe "update_document" do
-    setup context do
-      socket = join_user_channel(context)
-
-      doc_id = UUID.uuid4()
-
-      ref =
-        push(socket, "create_document", %{
-          "id" => doc_id,
-          "content" => %{"title" => "Original"}
-        })
-
-      assert_reply ref, :ok, %{content_hash: content_hash}
-
-      %{socket: socket, doc_id: doc_id, content_hash: content_hash}
-    end
-
-    test "updates document with valid content_hash", %{
-      socket: socket,
-      doc_id: doc_id,
-      content_hash: content_hash
-    } do
-      ref =
-        push(socket, "update_document", %{
-          "id" => doc_id,
-          "patch" => [%{op: "replace", path: "/title", value: "Updated"}],
-          "content_hash" => content_hash
-        })
-
-      assert_reply ref, :ok, %{sync_revision: 2}
-      assert_broadcast "document_updated", %{id: ^doc_id, sync_revision: 2}
-    end
-
-    test "returns hash_mismatch for wrong content_hash", %{socket: socket, doc_id: doc_id} do
-      ref =
-        push(socket, "update_document", %{
-          "id" => doc_id,
-          "patch" => [%{op: "replace", path: "/title", value: "Updated"}],
-          "content_hash" => "wrong_hash"
-        })
-
-      assert_reply ref, :error, %{reason: "hash_mismatch", current_revision: 1}
-    end
-
-    test "returns missing_hash when content_hash is nil", %{socket: socket, doc_id: doc_id} do
-      ref =
-        push(socket, "update_document", %{
-          "id" => doc_id,
-          "patch" => [%{op: "replace", path: "/title", value: "Updated"}],
-          "content_hash" => nil
-        })
-
-      assert_reply ref, :error, %{reason: "missing_hash"}
-    end
-  end
-
-  describe "update_document / delete_document self-echo" do
-    setup context do
-      {:ok, doc} =
-        ReplicantServer.Documents.create_document(context.user_id, %{
-          "id" => UUID.uuid4(),
-          "content" => %{"title" => "Original"}
-        })
-
-      %{doc: doc}
-    end
-
-    defp join_second_device(context, test_pid) do
-      {:ok, _reply, _socket} =
-        socket(ReplicantServer.Sync.Socket, "user_socket", %{}, test_process: test_pid)
-        |> subscribe_and_join(ReplicantServer.Sync.Channel, "sync:user:#{context.user_id}", %{
-          "email" => context.email,
-          "api_key" => context.credential.api_key,
-          "signature" => context.signature,
-          "timestamp" => context.timestamp
-        })
-
-      :ok
-    end
-
-    test "update: creator does not receive its own push; other device gets exactly one",
-         %{
-           doc: doc
-         } = context do
-      socket = join_user_channel(context)
-      test_pid = self()
-
-      other_device =
-        Task.async(fn ->
-          join_second_device(context, test_pid)
-          send(test_pid, :joined)
-
-          assert_push "document_updated", payload
-          refute_push "document_updated", %{}
-          payload
-        end)
-
-      receive do
-        :joined -> :ok
-      end
-
-      ref =
-        push(socket, "update_document", %{
-          "id" => doc.id,
-          "patch" => [%{op: "replace", path: "/title", value: "Updated"}],
-          "content_hash" => doc.content_hash
-        })
-
-      assert_reply ref, :ok, %{sync_revision: 2}
-
-      refute_push "document_updated", %{}
-
-      doc_id = doc.id
-      assert %{id: ^doc_id} = Task.await(other_device)
-    end
-
-    test "delete: creator does not receive its own push; other device gets exactly one",
-         %{
-           doc: doc
-         } = context do
-      socket = join_user_channel(context)
-      test_pid = self()
-
-      other_device =
-        Task.async(fn ->
-          join_second_device(context, test_pid)
-          send(test_pid, :joined)
-
-          assert_push "document_deleted", payload
-          refute_push "document_deleted", %{}
-          payload
-        end)
-
-      receive do
-        :joined -> :ok
-      end
-
-      ref = push(socket, "delete_document", %{"id" => doc.id})
-
-      assert_reply ref, :ok
-
-      refute_push "document_deleted", %{}
-
-      doc_id = doc.id
-      assert %{id: ^doc_id} = Task.await(other_device)
-    end
-  end
-
-  describe "owned public documents" do
-    setup context do
-      socket = join_user_channel(context)
-
-      {:ok, doc} =
-        ReplicantServer.Documents.create_document(context.user_id, %{
-          "id" => UUID.uuid4(),
-          "content" => %{"title" => "Public tuning"}
-        })
-
-      {:ok, doc} =
-        doc
-        |> Ecto.Changeset.change(visibility: "public")
-        |> ReplicantServer.Repo.update()
-
-      Phoenix.PubSub.subscribe(ReplicantServer.PubSub, "sync:public")
-      %{socket: socket, doc: doc}
-    end
-
-    test "updating an owned public document broadcasts to sync:public", %{
-      socket: socket,
-      doc: doc
-    } do
-      doc_id = doc.id
-
-      ref =
-        push(socket, "update_document", %{
-          "id" => doc_id,
-          "patch" => [%{op: "replace", path: "/title", value: "Renamed"}],
-          "content_hash" => doc.content_hash
-        })
-
-      assert_reply ref, :ok, _
-
-      assert_receive %Phoenix.Socket.Broadcast{
-        topic: "sync:public",
-        event: "document_updated",
-        payload: %{id: ^doc_id}
-      }
-    end
-
-    test "deleting an owned public document broadcasts to sync:public", %{
-      socket: socket,
-      doc: doc
-    } do
-      doc_id = doc.id
-
-      ref = push(socket, "delete_document", %{"id" => doc_id})
-
-      assert_reply ref, :ok
-
-      assert_receive %Phoenix.Socket.Broadcast{
-        topic: "sync:public",
-        event: "document_deleted",
-        payload: %{id: ^doc_id}
-      }
-    end
-
-    test "a private document does not broadcast to sync:public", %{socket: socket} do
-      doc_id = UUID.uuid4()
-
-      ref =
-        push(socket, "create_document", %{
-          "id" => doc_id,
-          "content" => %{"title" => "Private"}
-        })
-
-      assert_reply ref, :ok, _
-      refute_receive %Phoenix.Socket.Broadcast{topic: "sync:public", event: "document_created"}
-    end
-  end
-
-  describe "full_sync" do
-    setup context do
-      socket = join_user_channel(context)
-
-      # Create some documents
-      refs =
-        for i <- 1..3 do
-          push(socket, "create_document", %{
-            "id" => UUID.uuid4(),
-            "content" => %{"title" => "Doc #{i}"}
-          })
-        end
-
-      for ref <- refs do
-        assert_reply ref, :ok, _
-      end
-
-      %{socket: socket}
-    end
-
-    test "returns all user documents", %{socket: socket} do
-      ref = push(socket, "request_full_sync", %{})
-      assert_reply ref, :ok, %{documents: docs, latest_sequence: seq}
-      assert length(docs) == 3
-      assert seq > 0
-    end
-
-    test "full sync documents carry attribution", %{socket: socket} do
-      ref = push(socket, "request_full_sync", %{})
-      assert_reply ref, :ok, %{documents: docs}
-
-      assert Enum.all?(docs, fn d ->
-               Map.has_key?(d, :author_name) and d.visibility in ["private", "public"] and
-                 Map.has_key?(d, :provenance)
-             end)
-    end
-  end
-
-  describe "get_document" do
-    setup context do
-      socket = join_user_channel(context)
-
-      doc_id = UUID.uuid4()
-
-      ref =
-        push(socket, "create_document", %{
-          "id" => doc_id,
-          "content" => %{"title" => "Test"}
-        })
-
-      assert_reply ref, :ok, %{content_hash: content_hash}
-
-      %{socket: socket, doc_id: doc_id, content_hash: content_hash}
-    end
-
-    test "returns the document with content, revision, and hash", %{
-      socket: socket,
-      doc_id: doc_id,
-      content_hash: content_hash
-    } do
-      ref = push(socket, "get_document", %{"id" => doc_id})
-
-      assert_reply ref, :ok, %{
-        id: ^doc_id,
-        content: %{"title" => "Test"},
-        sync_revision: 1,
-        content_hash: ^content_hash,
-        deleted: false
-      }
-    end
-
-    test "returns not_found for an unknown id", %{socket: socket} do
-      ref = push(socket, "get_document", %{"id" => Ecto.UUID.generate()})
-
-      assert_reply ref, :error, %{reason: "not_found"}
-    end
-
-    test "returns deleted: true for a soft-deleted document", %{socket: socket, doc_id: doc_id} do
-      ref = push(socket, "delete_document", %{"id" => doc_id})
-      assert_reply ref, :ok
-
-      ref = push(socket, "get_document", %{"id" => doc_id})
-
-      assert_reply ref, :ok, %{id: ^doc_id, deleted: true}
-    end
-
-    test "returns not_found for another user's private document", %{doc_id: doc_id} do
-      other_socket = join_user_channel(mint_other_user_context())
-
-      ref = push(other_socket, "get_document", %{"id" => doc_id})
-
-      assert_reply ref, :error, %{reason: "not_found"}
-    end
-
-    test "returns a public document owned by another user", %{socket: socket} do
-      owner_context = mint_other_user_context()
-
-      {:ok, doc} =
-        ReplicantServer.Documents.create_document(owner_context.user_id, %{
-          "id" => UUID.uuid4(),
-          "content" => %{"title" => "Public tuning"}
-        })
-
-      {:ok, doc} =
-        doc
-        |> Ecto.Changeset.change(visibility: "public")
-        |> ReplicantServer.Repo.update()
-
-      ref = push(socket, "get_document", %{"id" => doc.id})
-      doc_id = doc.id
-      doc_hash = doc.content_hash
-
-      assert_reply ref, :ok, %{
-        id: ^doc_id,
-        content: %{"title" => "Public tuning"},
-        sync_revision: 1,
-        content_hash: ^doc_hash,
-        deleted: false
-      }
-    end
-  end
-
-  describe "get_changes_since" do
-    setup context do
-      socket = join_user_channel(context)
-
-      doc_id = UUID.uuid4()
-
-      ref =
-        push(socket, "create_document", %{
-          "id" => doc_id,
-          "content" => %{"title" => "Test"}
-        })
-
-      assert_reply ref, :ok, _
-
-      %{socket: socket, doc_id: doc_id}
-    end
-
-    test "returns events since sequence", %{socket: socket} do
-      ref = push(socket, "get_changes_since", %{"last_sequence" => 0})
-      assert_reply ref, :ok, %{events: events, latest_sequence: _}
-      assert length(events) >= 1
-      assert hd(events).event_type == "create"
-    end
-
-    test "events carry the document's attribution", %{socket: socket} do
-      doc_id = UUID.uuid4()
-
-      ref =
-        push(socket, "create_document", %{"id" => doc_id, "content" => %{"title" => "Evented"}})
-
-      assert_reply ref, :ok, _
-
-      ref = push(socket, "get_changes_since", %{"last_sequence" => 0})
-      assert_reply ref, :ok, %{events: events}
-
-      event = Enum.find(events, &(&1.id == doc_id))
-      assert event.author_name == "test"
-      assert event.visibility == "private"
-      assert event.provenance == %{}
-      refute Map.has_key?(event, :user_id)
+    test "a credential with no user gets auth_invalid", %{ctx: ctx} do
+      unenrolled = %{ctx | credential: insert_credential(nil)}
+      assert {:error, %{code: "auth_invalid", is_fatal: true}} = join_sync(unenrolled)
     end
   end
 end
