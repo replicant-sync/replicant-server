@@ -154,5 +154,54 @@ defmodule ReplicantServer.FeedTest do
       assert event.seq == seq
       assert next >= seq
     end
+
+    defp hold_lock(scope, parent) do
+      Task.async(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          Repo.transaction(fn ->
+            Feed.lock_scopes([scope])
+            send(parent, :locked)
+
+            receive do
+              :release -> :ok
+            end
+          end)
+        end)
+      end)
+    end
+
+    test "record locks the scope before nextval, so a blocked writer's seq never trails one taken while it waited",
+         %{scope: s} do
+      holder = hold_lock(s, self())
+      assert_receive :locked
+
+      writer_b =
+        Task.async(fn ->
+          Sandbox.unboxed_run(Repo, fn ->
+            Repo.transaction(fn -> Feed.record([s], change()) end)
+          end)
+        end)
+
+      refute Task.yield(writer_b, 200)
+
+      other = scope()
+
+      on_exit(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          Repo.delete_all(from e in ChangeEvent, where: e.scope == ^other)
+        end)
+      end)
+
+      {seq_other, _} =
+        Sandbox.unboxed_run(Repo, fn ->
+          {:ok, result} = Repo.transaction(fn -> Feed.record([other], change()) end)
+          result
+        end)
+
+      send(holder.pid, :release)
+      Task.await(holder)
+      assert {:ok, {seq_b, _events}} = Task.await(writer_b)
+      assert seq_b > seq_other
+    end
   end
 end
