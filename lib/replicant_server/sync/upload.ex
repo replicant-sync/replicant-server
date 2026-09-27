@@ -14,9 +14,15 @@ defmodule ReplicantServer.Sync.Upload do
   def run(user_id, client_id, params) do
     case parse(params) do
       {:ok, req} -> apply_request(user_id, client_id, req)
-      {:error, reason} -> {:error, error_reply({:error, reason}, params["doc_id"])}
+      {:error, reason} -> {:error, error_reply({:error, reason}, safe_doc_id(params))}
     end
   end
+
+  # `params` may be any decoded JSON value (a list, a string, ...), not just a
+  # map, and `doc_id` may be present but not a string; echo it back only when
+  # both hold, rather than raising on Access/UUID mismatches.
+  defp safe_doc_id(%{"doc_id" => doc_id}) when is_binary(doc_id), do: doc_id
+  defp safe_doc_id(_params), do: nil
 
   defp apply_request(user_id, client_id, req) do
     meta = %{client_id: client_id, upload_id: req.upload_id}
@@ -25,7 +31,8 @@ defmodule ReplicantServer.Sync.Upload do
       serialize(user_id, req)
 
       case Repo.get_by(UploadResult, upload_id: req.upload_id, base_hash: req.base_key) do
-        %UploadResult{reply: reply} -> {:stored, reply}
+        %UploadResult{doc_id: doc_id, reply: reply} when doc_id == req.doc_id -> {:stored, reply}
+        %UploadResult{} -> Repo.rollback({:error, :upload_id_reused})
         nil -> write(user_id, req, meta)
       end
     end)
@@ -57,18 +64,32 @@ defmodule ReplicantServer.Sync.Upload do
 
     case result do
       {:ok, doc, events} ->
-        Repo.insert!(%UploadResult{
-          upload_id: req.upload_id,
-          base_hash: req.base_key,
-          doc_id: doc.id,
-          reply: Envelope.doc(doc)
-        })
-
-        {:applied, doc, events}
+        case store_result(req, doc) do
+          {:ok, _stored} -> {:applied, doc, events}
+          # Another transaction inserted (upload_id, base_hash) for a different
+          # doc_id between our lookup and this insert; undo this write too.
+          {:error, _changeset} -> Repo.rollback({:error, :upload_id_reused})
+        end
 
       error ->
         Repo.rollback(error)
     end
+  end
+
+  defp store_result(req, doc) do
+    %UploadResult{}
+    |> Ecto.Changeset.cast(
+      %{
+        upload_id: req.upload_id,
+        base_hash: req.base_key,
+        doc_id: doc.id,
+        reply: Envelope.doc(doc)
+      },
+      [:upload_id, :base_hash, :doc_id, :reply],
+      empty_values: []
+    )
+    |> Ecto.Changeset.unique_constraint([:upload_id, :base_hash], name: :upload_results_pkey)
+    |> Repo.insert()
   end
 
   defp parse(%{"upload_id" => upload_id, "doc_id" => doc_id, "kind" => kind} = params)
@@ -131,7 +152,8 @@ defmodule ReplicantServer.Sync.Upload do
                :invalid_patch,
                :missing_hash,
                :insert_failed,
-               :update_failed
+               :update_failed,
+               :upload_id_reused
              ] ->
           {"validation", %{}}
 

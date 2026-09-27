@@ -264,6 +264,57 @@ defmodule ReplicantServer.Sync.UploadTest do
       assert {:error, %{code: "too_large", is_fatal: false}} =
                upload(user, "create", Ecto.UUID.generate(), %{"payload" => big})
     end
+
+    test "a non-map top-level params value is validation, never a raise", %{user: user} do
+      assert {:error, %{code: "validation", is_fatal: false, doc_id: nil}} =
+               Upload.run(user.id, @client_id, ["not", "a", "map"])
+
+      assert {:error, %{code: "validation", is_fatal: false, doc_id: nil}} =
+               Upload.run(user.id, @client_id, "just a string")
+    end
+
+    test "a non-string doc_id is validation and is not echoed back", %{user: user} do
+      assert {:error, %{code: "validation", is_fatal: false, doc_id: nil}} =
+               Upload.run(user.id, @client_id, %{
+                 "upload_id" => Ecto.UUID.generate(),
+                 "doc_id" => 123,
+                 "kind" => "create",
+                 "payload" => %{}
+               })
+    end
+
+    test "a malformed but string doc_id is still echoed back", %{user: user} do
+      assert {:error, %{code: "validation", doc_id: "not-a-uuid"}} =
+               upload(user, "create", "not-a-uuid", %{"payload" => %{}})
+    end
+  end
+
+  describe "dedup keyed on doc_id" do
+    test "a stored (upload_id, base_hash) under a different doc_id is validation, not the other doc's reply",
+         %{user: user} do
+      upload_id = Ecto.UUID.generate()
+
+      {:ok, _first} =
+        Upload.run(user.id, @client_id, %{
+          "upload_id" => upload_id,
+          "doc_id" => Ecto.UUID.generate(),
+          "kind" => "create",
+          "payload" => %{"title" => "A"}
+        })
+
+      other_doc_id = Ecto.UUID.generate()
+
+      assert {:error, %{code: "validation", is_fatal: false, doc_id: ^other_doc_id}} =
+               Upload.run(user.id, @client_id, %{
+                 "upload_id" => upload_id,
+                 "doc_id" => other_doc_id,
+                 "kind" => "create",
+                 "payload" => %{"title" => "B"}
+               })
+
+      refute Repo.get(Document, other_doc_id)
+      assert events(other_doc_id) == []
+    end
   end
 
   describe "concurrent uploads (real transactions)" do
@@ -315,6 +366,110 @@ defmodule ReplicantServer.Sync.UploadTest do
       events = Sandbox.unboxed_run(Repo, fn -> events(doc.id) end)
       assert [create, update] = events
       assert update.prev_seq == create.seq
+    end
+
+    test "two concurrent creates with the same upload_id and doc_id: one writes, both get the identical reply" do
+      {user, doc_id, upload_id} =
+        Sandbox.unboxed_run(Repo, fn ->
+          {:ok, u} =
+            Accounts.get_or_create_user(
+              "race-create-#{System.unique_integer([:positive])}@example.com"
+            )
+
+          {u, Ecto.UUID.generate(), Ecto.UUID.generate()}
+        end)
+
+      p = %{
+        "upload_id" => upload_id,
+        "doc_id" => doc_id,
+        "kind" => "create",
+        "payload" => %{"title" => "Race"}
+      }
+
+      race = fn ->
+        Task.async(fn -> Sandbox.unboxed_run(Repo, fn -> Upload.run(user.id, nil, p) end) end)
+      end
+
+      [r1, r2] = Task.await_many([race.(), race.()])
+      assert {:ok, reply1} = r1
+      assert {:ok, reply2} = r2
+      assert json(reply1) == json(reply2)
+      assert Sandbox.unboxed_run(Repo, fn -> length(events(doc_id)) end) == 1
+
+      on_exit(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          Repo.delete_all(from e in ChangeEvent, where: e.doc_id == ^doc_id)
+          Repo.delete_all(from ur in UploadResult, where: ur.doc_id == ^doc_id)
+          Repo.delete_all(from u in User, where: u.id == ^user.id)
+        end)
+      end)
+    end
+
+    test "two concurrent updates with the same upload_id and base_hash: one writes, both get the identical reply",
+         %{racer: user, doc: doc} do
+      p = %{
+        "upload_id" => Ecto.UUID.generate(),
+        "doc_id" => doc.id,
+        "kind" => "update",
+        "base_hash" => doc.content_hash,
+        "payload" => [%{"op" => "replace", "path" => "/n", "value" => 9}]
+      }
+
+      race = fn ->
+        Task.async(fn -> Sandbox.unboxed_run(Repo, fn -> Upload.run(user.id, nil, p) end) end)
+      end
+
+      [r1, r2] = Task.await_many([race.(), race.()])
+      assert {:ok, reply1} = r1
+      assert {:ok, reply2} = r2
+      assert json(reply1) == json(reply2)
+      assert Sandbox.unboxed_run(Repo, fn -> length(events(doc.id)) end) == 2
+    end
+
+    test "two concurrent updates on different doc_ids sharing an upload_id and base_hash: no crash, one wins",
+         %{racer: user, doc: doc_a} do
+      doc_b =
+        Sandbox.unboxed_run(Repo, fn ->
+          {:ok, d} =
+            Documents.create_document(user.id, %{id: Ecto.UUID.generate(), content: %{"n" => 0}})
+
+          d
+        end)
+
+      upload_id = Ecto.UUID.generate()
+
+      race = fn doc ->
+        Task.async(fn ->
+          Sandbox.unboxed_run(Repo, fn ->
+            Upload.run(user.id, nil, %{
+              "upload_id" => upload_id,
+              "doc_id" => doc.id,
+              "kind" => "update",
+              "base_hash" => doc.content_hash,
+              "payload" => [%{"op" => "replace", "path" => "/n", "value" => 1}]
+            })
+          end)
+        end)
+      end
+
+      results = Task.await_many([race.(doc_a), race.(doc_b)])
+
+      assert Enum.all?(results, fn
+               {:ok, _} -> true
+               {:error, %{code: "validation", is_fatal: false}} -> true
+               _ -> false
+             end)
+
+      outcomes = Enum.map(results, &elem(&1, 0))
+      assert :ok in outcomes
+      assert :error in outcomes
+
+      on_exit(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          Repo.delete_all(from e in ChangeEvent, where: e.doc_id == ^doc_b.id)
+          Repo.delete_all(from ur in UploadResult, where: ur.doc_id == ^doc_b.id)
+        end)
+      end)
     end
   end
 end
