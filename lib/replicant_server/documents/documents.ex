@@ -74,6 +74,10 @@ defmodule ReplicantServer.Documents do
 
   @doc false
   def run_write(fun) do
+    # Feed.broadcast/2 must run after commit, which an outer transaction would defer.
+    if Repo.in_transaction?(),
+      do: raise(ArgumentError, "run_write must not run inside an open transaction")
+
     Repo.transaction(fn ->
       case fun.() do
         {:ok, doc, events} -> {doc, events}
@@ -550,27 +554,38 @@ defmodule ReplicantServer.Documents do
 
   @doc """
   Replaces a document's content (source or publication) and emits an upsert to
-  every scope it belongs to. Unchanged content is a no-op.
+  every scope it belongs to. Content equal to the stored row is a no-op
+  returning the stored row. If `document` is no longer the stored version,
+  returns `{:error, :stale, current}` and writes nothing.
   """
   def replace_content(%Document{} = document, new_content) when is_map(new_content) do
-    if json_diff(document.content, new_content) == [] do
-      {:ok, document}
-    else
-      run_write(fn ->
-        case lock_document(document.id) do
-          %Document{deleted_at: nil} = locked -> write_content(locked, new_content, %{})
-          _ -> {:error, :not_found}
-        end
-      end)
-      |> tap_ok(fn updated ->
-        broadcast("documents:#{updated.id}", {:document_updated, updated})
+    run_write(fn ->
+      case lock_document(document.id) do
+        %Document{deleted_at: nil} = locked ->
+          cond do
+            json_diff(locked.content, new_content) == [] -> {:unchanged, locked}
+            locked.content_hash != document.content_hash -> {:error, :stale, locked}
+            true -> write_content(locked, new_content, %{})
+          end
 
-        if updated.user_id do
-          broadcast("documents:user:#{updated.user_id}", {:document_updated, updated})
-        else
-          broadcast("documents:public", {:document_updated, updated})
-        end
-      end)
+        _ ->
+          {:error, :not_found}
+      end
+    end)
+    |> case do
+      {:unchanged, locked} ->
+        {:ok, locked}
+
+      result ->
+        tap_ok(result, fn updated ->
+          broadcast("documents:#{updated.id}", {:document_updated, updated})
+
+          if updated.user_id do
+            broadcast("documents:user:#{updated.user_id}", {:document_updated, updated})
+          else
+            broadcast("documents:public", {:document_updated, updated})
+          end
+        end)
     end
   end
 

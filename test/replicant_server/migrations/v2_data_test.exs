@@ -5,6 +5,7 @@ defmodule ReplicantServer.Migrations.V2DataTest do
   alias ReplicantServer.Collections.{Collection, CollectionMember}
   alias ReplicantServer.Documents.Document
   alias ReplicantServer.Migrations.V2Data
+  alias ReplicantServer.Sync.Protocol
 
   defp legacy(attrs) do
     Repo.insert!(
@@ -39,25 +40,15 @@ defmodule ReplicantServer.Migrations.V2DataTest do
     insert_raw_content(user_id, "null")
   end
 
-  defp insert_raw_content(user_id, json) do
+  defp insert_raw_content(user_id, json, deleted_at \\ nil) do
     id = Ecto.UUID.generate()
 
     Repo.query!(
-      "INSERT INTO documents (id, user_id, content, visibility, created_at, updated_at) VALUES ($1, $2, $3::jsonb, 'public', now(), now())",
-      [Ecto.UUID.dump!(id), Ecto.UUID.dump!(user_id), json]
+      "INSERT INTO documents (id, user_id, content, visibility, deleted_at, created_at, updated_at) VALUES ($1, $2, $3::text::jsonb, 'public', $4, now(), now())",
+      [Ecto.UUID.dump!(id), Ecto.UUID.dump!(user_id), json, deleted_at]
     )
 
     %{id: id}
-  end
-
-  defp raw_document(id) do
-    %{rows: [[seq, read_only, content_hash, deleted_at]]} =
-      Repo.query!(
-        "SELECT seq, read_only, content_hash, deleted_at FROM documents WHERE id = $1",
-        [Ecto.UUID.dump!(id)]
-      )
-
-    %{seq: seq, read_only: read_only, content_hash: content_hash, deleted_at: deleted_at}
   end
 
   setup do
@@ -83,7 +74,8 @@ defmodule ReplicantServer.Migrations.V2DataTest do
           content: %{"title" => "Odd float", "value" => 5.0}
         ),
       nonmap: legacy_nonmap_content(author.id),
-      jsonb_null: legacy_null_content(author.id)
+      jsonb_null: legacy_null_content(author.id),
+      deleted_nonmap: insert_raw_content(author.id, "42", DateTime.utc_now())
     }
 
     count_before = Repo.aggregate(Document, :count)
@@ -123,26 +115,31 @@ defmodule ReplicantServer.Migrations.V2DataTest do
     assert Repo.get!(Document, deleted.id).read_only
   end
 
-  test "non-object jsonb content is quarantined instead of curated or hashed", %{
+  test "non-object jsonb content is quarantined: loadable, deleted, original kept", %{
+    author: author,
     nonmap: nonmap,
-    jsonb_null: jsonb_null
+    jsonb_null: jsonb_null,
+    deleted_nonmap: deleted_nonmap
   } do
-    for id <- [nonmap.id, jsonb_null.id] do
-      row = raw_document(id)
-      refute is_nil(row.deleted_at)
-      assert is_nil(row.content_hash)
-      assert row.seq > 0
+    for {id, original} <- [
+          {nonmap.id, ["legacy", "array"]},
+          {jsonb_null.id, nil},
+          {deleted_nonmap.id, 42}
+        ] do
+      doc = Repo.get!(Document, id)
+      assert doc.content == %{}
+      refute is_nil(doc.deleted_at)
+      assert doc.seq > 0
+      assert Map.fetch!(doc.provenance, "quarantined_content") == original
       refute id in curated_members()
+
+      assert {:error, %{code: code}} = Protocol.get_document(author.id, %{"doc_id" => id})
+      assert code in ["deleted", "not_found"]
     end
   end
 
-  test "every live document gets a seq and a recomputed non-nil hash", %{
-    nonmap: nonmap,
-    jsonb_null: jsonb_null
-  } do
-    excluded = [nonmap.id, jsonb_null.id]
-
-    for doc <- Repo.all(from d in Document, where: d.id not in ^excluded and is_nil(d.deleted_at)) do
+  test "every live document gets a seq and a recomputed non-nil hash" do
+    for doc <- Repo.all(from d in Document, where: is_nil(d.deleted_at)) do
       assert doc.seq > 0
       refute is_nil(doc.content_hash)
       assert doc.content_hash == Documents.compute_hash(doc.content)
@@ -166,16 +163,11 @@ defmodule ReplicantServer.Migrations.V2DataTest do
     assert doc.user_id == p.user_id
   end
 
-  test "re-running changes nothing", %{nonmap: nonmap, jsonb_null: jsonb_null} do
-    excluded = [nonmap.id, jsonb_null.id]
-    query = from d in Document, where: d.id not in ^excluded, order_by: d.id
+  test "re-running changes nothing" do
+    query = from d in Document, order_by: d.id
     before = Repo.all(query)
-    before_raw = Enum.map(excluded, &raw_document/1)
-
     assert :ok = V2Data.run(Repo)
-
     assert Repo.all(query) == before
-    assert Enum.map(excluded, &raw_document/1) == before_raw
   end
 
   test "re-running after a v2 publication exists does not curate it", %{author: author} do

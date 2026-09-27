@@ -75,6 +75,22 @@ defmodule ReplicantServer.Sync.ChannelTest do
       assert {:error, %{code: "auth_invalid"}} = join_sync(ctx, params: %{})
     end
 
+    @tag :capture_log
+    test "non-string credentials or a non-integer timestamp get auth_invalid", %{ctx: ctx} do
+      valid = auth_params(ctx)
+
+      for key <- ~w(api_key email signature timestamp), bad <- [%{"x" => 1}, ["x"], 12, "12"] do
+        if not (key == "timestamp" and is_integer(bad)) and
+             not (key != "timestamp" and is_binary(bad)) do
+          params = Map.put(valid, key, bad)
+
+          assert {:error, %{code: "auth_invalid", is_fatal: true}} =
+                   join_sync(ctx, params: params),
+                 "#{key} = #{inspect(bad)}"
+        end
+      end
+    end
+
     test "a credential with no user gets auth_invalid", %{ctx: ctx} do
       unenrolled = %{ctx | credential: insert_credential(nil)}
       assert {:error, %{code: "auth_invalid", is_fatal: true}} = join_sync(unenrolled)

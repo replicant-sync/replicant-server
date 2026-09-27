@@ -6,7 +6,7 @@ Sync protocol v2 (DEV-1151). Hard cut: v1 clients are refused at socket connect.
 
 ### Added
 
-- `sync:v2` channel with a protocol version check at join (`update_required`).
+- `sync:v2` channel; the protocol version is checked at socket connect (`update_required`).
 - Per-scope change feed: `get_changes_since`, `get_snapshot`, `change` pushes with `seq`/`prev_seq`. Scopes are `own` and `collection:<name>`.
 - `upload` (create/update/delete), deduplicated on `(upload_id, base_hash)`.
 - `get_document`; a deleted document replies `deleted` with `current_seq`.
@@ -26,7 +26,7 @@ Sync protocol v2 (DEV-1151). Hard cut: v1 clients are refused at socket connect.
 
 ### Protocol summary
 
-Protocol version is checked at socket connect (wrong or missing version → HTTP 426, `update_required`). HMAC auth happens at the `sync:v2` join. Change events and stored upload replies retain for 90 days; a cursor older than the `trim_watermark` gets `cursor_too_old`.
+Protocol version is checked at socket connect (wrong or missing version → HTTP 426, `update_required`). HMAC auth happens at the `sync:v2` join. Change events and stored upload replies retain for 90 days; a cursor older than the `trim_watermark`, or past the feed head, gets `cursor_too_old`.
 
 ### Host (entonal-web-app) follow-ups
 
@@ -42,17 +42,29 @@ Protocol version is checked at socket connect (wrong or missing version → HTTP
 - `create_public_document` now creates a curated publication: it no longer dedups by content hash, and returns `{:error, :insert_failed}` on failure.
 - `delete_public_document` returns `{:error, :not_found}` for a document that is not published.
 - Owners' lists no longer show public documents — the migration makes no private copies, so a published document leaves the owner's list.
+- `replace_content/2` can return `{:error, :stale, current}` when the document passed in is no longer the stored version; nothing is written. Reload and retry, or show the conflict.
+- Set the socket's websocket `max_frame_size` to about 2 MiB (`websocket: [max_frame_size: 2_097_152, ...]`), so an oversized frame is refused before it is decoded; uploads are capped at 1 MiB.
 
 ### Deploy
 
-Migrations run on host boot. They convert every public document into a publication in place: an owned document keeps its id, its owner becomes `author_id`, and no private source copy is made (it leaves the owner's list). All publications are seeded into curated, and every document gets a seq and a recomputed hash. The migrations cannot be rolled back. Release with the v2 client and Entonal build. The host app must read `author_id` for publications.
+Migrations run on host boot. They convert every public document into a publication in place: an owned document keeps its id, its owner becomes `author_id`, and no private source copy is made (it leaves the owner's list). All publications are seeded into curated, and every document gets a seq and a recomputed hash. A document whose content is not a JSON object is quarantined: it is soft-deleted, its content becomes `{}`, and the original is kept at `provenance->'quarantined_content'`. The migrations cannot be rolled back. Release with the v2 client and Entonal build. The host app must read `author_id` for publications.
 
 #### Release checklist (hard cut — ships with the v2 Rust client and Entonal build)
 
+The host (entonal-web-app) deploys with Kamal and runs `ReplicantServer.Release.migrate` on container start. The commands below are a checklist for the host repo; the host operator must confirm them against its Kamal config before the release.
+
 1. Take a DB backup. The migrations cannot be rolled back.
-2. Dry-run both migrations against a `pg_dump` of production. Compare document counts, publications, curated membership, and hashes against the pre-migration data. Also report `SELECT count(*) FROM documents WHERE jsonb_typeof(content) <> 'object'` — these rows will be quarantined by the migration.
-3. Stop v1 writers before migrating. Use a maintenance window, not a rolling boot: a v1 write that lands after the seq assignment step keeps that row's seq at 0 forever.
-4. Tag `v0.5.0`, bump the web app's dependency tag and `mix.lock`, deploy.
+2. Dry-run both migrations against a `pg_dump` of production. Compare document counts, publications, curated membership and hashes against the pre-migration data. Then run the checks below.
+3. Tag `v0.5.0`. In the host, bump the dependency tag and `mix.lock`, then build and push the new image (the host's tag pipeline, or `kamal build push`).
+4. Stop the v1 app, so no v1 write lands after the seq assignment step (that row's seq would stay 0): `kamal app stop`.
+5. Run the migrations once on the new image: `kamal app exec --version=<new version> 'bin/migrate'` (a one-off container; `--reuse` only works while a container of that version is running).
+6. Deploy: `kamal deploy --skip-push --version=<new version>`. The boot-time migrate is now a no-op.
+7. Run the checks below against production.
+
+Checks (dry run and post-deploy):
+
+- `SELECT count(*) FROM documents WHERE seq = 0` must be `0`.
+- Report the quarantine count: `SELECT count(*) FROM documents WHERE provenance ? 'quarantined_content'`. Before the migration the same rows are `SELECT count(*) FROM documents WHERE jsonb_typeof(content) <> 'object'`.
 
 ## 0.4.5
 

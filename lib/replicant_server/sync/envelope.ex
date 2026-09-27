@@ -30,11 +30,16 @@ defmodule ReplicantServer.Sync.Envelope do
       prev_seq: event.prev_seq,
       doc_id: event.doc_id,
       kind: event.kind,
-      doc: if(event.kind == "upsert" and match?(%Document{}, doc), do: doc(doc)),
+      doc: if(event.kind == "upsert", do: change_doc(doc)),
       client_id: event.client_id,
       upload_id: event.upload_id
     }
   end
+
+  defp change_doc(%Document{} = d), do: doc(d)
+  # An upload's stored reply, already in envelope shape.
+  defp change_doc(%{} = reply), do: reply
+  defp change_doc(nil), do: nil
 
   def error(code, extra \\ %{}) do
     Map.merge(%{code: code, is_fatal: code in @fatal_codes}, extra)

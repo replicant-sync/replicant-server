@@ -223,6 +223,37 @@ defmodule ReplicantServer.DocumentsTest do
     end
   end
 
+  describe "replace_content" do
+    test "a stale copy is refused with the current document and nothing is written", %{
+      user: user
+    } do
+      {:ok, doc} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: %{"v" => 1}})
+      {:ok, current} = Documents.replace_content(doc, %{"v" => 2})
+
+      assert {:error, :stale, ^current} = Documents.replace_content(doc, %{"v" => 3})
+      assert Repo.get!(Document, doc.id).content == %{"v" => 2}
+      assert length(events_for(doc.id)) == 2
+    end
+
+    test "content equal to the locked row is a no-op, even from a stale copy", %{user: user} do
+      {:ok, doc} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: %{"v" => 1}})
+      {:ok, current} = Documents.replace_content(doc, %{"v" => 2})
+
+      assert {:ok, ^current} = Documents.replace_content(doc, %{"v" => 2})
+      assert {:ok, ^current} = Documents.replace_content(current, %{"v" => 2})
+      assert Repo.get!(Document, doc.id).seq == current.seq
+      assert length(events_for(doc.id)) == 2
+    end
+  end
+
+  describe "run_write/1" do
+    test "refuses to run inside an open transaction" do
+      Repo.transaction(fn ->
+        assert_raise ArgumentError, fn -> Documents.run_write(fn -> {:error, :unused} end) end
+      end)
+    end
+  end
+
   describe "create_public_document" do
     test "identical public content creates two publications" do
       content = %{"title" => "Public Preset", "data" => [1, 2, 3]}

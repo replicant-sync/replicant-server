@@ -5,21 +5,24 @@ defmodule ReplicantServer.Sync.Protocol do
 
   alias ReplicantServer.{Feed, Repo, Scopes}
   alias ReplicantServer.Documents.Document
+  alias ReplicantServer.Feed.UploadResult
   alias ReplicantServer.Sync.Envelope
 
   @max_page 500
   @snapshot_page 200
+  @max_bigint 9_223_372_036_854_775_807
 
   def changes_since(scope_key, wire_scope, %{"cursor" => cursor} = params)
-      when is_integer(cursor) and cursor >= 0 do
+      when is_integer(cursor) and cursor >= 0 and cursor <= @max_bigint do
     case Feed.changes_since(scope_key, cursor, page_limit(params["limit"])) do
       {:ok, page} ->
         docs = load_docs(for e <- page.events, e.kind == "upsert", do: e.doc_id)
+        kept = for e <- page.events, e.kind != "upsert" or live?(docs[e.doc_id]), do: e
+        replies = load_upload_replies(for e <- kept, superseded_upload?(e, docs), do: e)
 
         changes =
-          for event <- page.events,
-              event.kind != "upsert" or live?(docs[event.doc_id]),
-              do: Envelope.change(event, docs[event.doc_id], wire_scope)
+          for event <- kept,
+              do: Envelope.change(event, doc_as_of(event, docs, replies), wire_scope)
 
         {:ok, %{changes: changes, next_cursor: page.next_cursor, has_more: page.has_more}}
 
@@ -111,6 +114,25 @@ defmodule ReplicantServer.Sync.Protocol do
 
   defp load_docs(ids) do
     Repo.all(from d in Document, where: d.id in ^Enum.uniq(ids)) |> Map.new(&{&1.id, &1})
+  end
+
+  # A later write replaced the document, so the upload's stored reply stands in for
+  # it: the uploader treats this upsert as its echo and must not see newer content.
+  defp superseded_upload?(event, docs) do
+    event.kind == "upsert" and event.upload_id != nil and docs[event.doc_id].seq > event.seq
+  end
+
+  defp load_upload_replies([]), do: %{}
+
+  defp load_upload_replies(events) do
+    upload_ids = Enum.uniq(for e <- events, do: e.upload_id)
+
+    Repo.all(from u in UploadResult, where: u.upload_id in ^upload_ids)
+    |> Map.new(&{{&1.upload_id, &1.doc_id, &1.reply["seq"]}, &1.reply})
+  end
+
+  defp doc_as_of(event, docs, replies) do
+    Map.get(replies, {event.upload_id, event.doc_id, event.seq}, docs[event.doc_id])
   end
 
   # A deleted document's upserts are dropped; its delete event follows at a higher seq.

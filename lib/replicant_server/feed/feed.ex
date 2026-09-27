@@ -80,11 +80,12 @@ defmodule ReplicantServer.Feed do
         )
 
       # Read after the events so a trim that commits mid-read is still detected.
-      if cursor < trim_watermark(), do: Repo.rollback(:cursor_too_old)
+      # A cursor past the head comes from another database (a restore or reset).
+      if cursor < trim_watermark() or cursor > head, do: Repo.rollback(:cursor_too_old)
 
       {page, rest} = Enum.split(events, limit)
       has_more = rest != []
-      next_cursor = if has_more, do: List.last(page).seq, else: max(head, cursor)
+      next_cursor = if has_more, do: List.last(page).seq, else: head
       %{events: page, next_cursor: next_cursor, has_more: has_more}
     end)
   end

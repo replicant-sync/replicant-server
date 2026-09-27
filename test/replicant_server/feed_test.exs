@@ -72,9 +72,8 @@ defmodule ReplicantServer.FeedTest do
       assert c2 >= last.seq
     end
 
-    test "never moves a cursor backwards" do
-      assert {:ok, %{next_cursor: 9_000_000_000_000}} =
-               Feed.changes_since(scope(), 9_000_000_000_000, 500)
+    test "a cursor past the feed head is refused" do
+      assert {:error, :cursor_too_old} = Feed.changes_since(scope(), 9_000_000_000_000, 500)
     end
 
     test "a cursor older than the trim watermark is refused" do

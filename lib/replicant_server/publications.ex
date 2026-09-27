@@ -28,10 +28,8 @@ defmodule ReplicantServer.Publications do
 
   @doc """
   Publishes a read-only copy of a source document the caller owns. The
-  publication starts outside every scope: it gets a seq (so `get_document`
-  can be used on it right away) but no feed event, since it belongs to no
-  scope yet. It joins a scope, and starts appearing in a feed, only via
-  `Collections.add/2`.
+  publication starts outside every scope: it gets a seq but no feed event,
+  and is readable (feed or `get_document`) only after `Collections.add/2`.
   """
   def publish(user_id, source_doc_id) do
     Documents.run_write(fn ->

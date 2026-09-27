@@ -22,8 +22,8 @@ defmodule ReplicantServer.FeedRetentionTest do
 
   test "trims events older than the window and raises the watermark" do
     base = next_seq()
-    old = event!("own:ret", base + 1, days_ago(91))
-    recent = event!("own:ret", base + 2, days_ago(1))
+    old = event!("own:ret", next_seq(), days_ago(91))
+    recent = event!("own:ret", next_seq(), days_ago(1))
 
     assert {:ok, trimmed} = Feed.trim(90)
     assert trimmed == old.seq

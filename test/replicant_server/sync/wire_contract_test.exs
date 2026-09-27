@@ -17,29 +17,29 @@ defmodule ReplicantServer.Sync.WireContractTest do
   @uuid ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/
   @seq_keys ~w(seq prev_seq next_cursor snapshot_seq current_seq)
   @time_keys ~w(created_at updated_at)
+  @token_keys ~w(page_token next_page_token)
+  @secret_hex_keys ~w(api_key signature)
 
   test "v2 frames match the client's wire types" do
     ctx = mint_user("wire@example.com")
-    {:ok, join_reply, socket} = join_sync(ctx)
+    connect_params = %{"protocol_version" => "2", "client_id" => Ecto.UUID.generate()}
+    assert {:ok, _socket} = connect(ReplicantServer.Sync.Socket, connect_params)
+    join_params = auth_params(ctx)
+    {:ok, join_reply, socket} = join_sync(ctx, params: join_params)
     doc_id = Ecto.UUID.generate()
 
-    ref =
-      Phoenix.ChannelTest.push(socket, "get_changes_since", %{
-        "scope" => "own",
-        "cursor" => 0,
-        "limit" => 500
-      })
-
+    changes_params = %{"scope" => "own", "cursor" => 0, "limit" => 500}
+    ref = Phoenix.ChannelTest.push(socket, "get_changes_since", changes_params)
     assert_reply ref, :ok, changes
 
-    ref =
-      Phoenix.ChannelTest.push(socket, "upload", %{
-        "upload_id" => Ecto.UUID.generate(),
-        "doc_id" => doc_id,
-        "kind" => "create",
-        "payload" => %{"title" => "Wire"}
-      })
+    create_params = %{
+      "upload_id" => Ecto.UUID.generate(),
+      "doc_id" => doc_id,
+      "kind" => "create",
+      "payload" => %{"title" => "Wire"}
+    }
 
+    ref = Phoenix.ChannelTest.push(socket, "upload", create_params)
     assert_reply ref, :ok, uploaded
     assert_push "change", change
 
@@ -54,20 +54,30 @@ defmodule ReplicantServer.Sync.WireContractTest do
 
     assert_reply ref, :error, mismatch
 
-    ref = Phoenix.ChannelTest.push(socket, "get_snapshot", %{"scope" => "own"})
+    snapshot_params = %{"scope" => "own"}
+    ref = Phoenix.ChannelTest.push(socket, "get_snapshot", snapshot_params)
     assert_reply ref, :ok, snapshot
 
-    ref = Phoenix.ChannelTest.push(socket, "get_document", %{"doc_id" => doc_id})
+    snapshot_page_params = %{
+      "scope" => "own",
+      "page_token" => "#{snapshot.snapshot_seq}:#{List.last(snapshot.docs).doc_id}"
+    }
+
+    ref = Phoenix.ChannelTest.push(socket, "get_snapshot", snapshot_page_params)
+    assert_reply ref, :ok, %{docs: [], next_page_token: nil}
+
+    document_params = %{"doc_id" => doc_id}
+    ref = Phoenix.ChannelTest.push(socket, "get_document", document_params)
     assert_reply ref, :ok, document
 
-    ref =
-      Phoenix.ChannelTest.push(socket, "upload", %{
-        "upload_id" => Ecto.UUID.generate(),
-        "doc_id" => doc_id,
-        "kind" => "delete",
-        "payload" => nil
-      })
+    delete_params = %{
+      "upload_id" => Ecto.UUID.generate(),
+      "doc_id" => doc_id,
+      "kind" => "delete",
+      "payload" => nil
+    }
 
+    ref = Phoenix.ChannelTest.push(socket, "upload", delete_params)
     assert_reply ref, :ok, _
     assert_push "change", delete_change
     assert %{kind: "delete", doc: nil, prev_seq: prev_seq} = delete_change
@@ -181,6 +191,18 @@ defmodule ReplicantServer.Sync.WireContractTest do
     ref = Phoenix.ChannelTest.push(socket, "get_document", %{"doc_id" => float_doc_id})
     assert_reply ref, :ok, float_document
 
+    update_params = %{
+      "upload_id" => Ecto.UUID.generate(),
+      "doc_id" => float_doc_id,
+      "kind" => "update",
+      "base_hash" => float_upload.hash,
+      "payload" => [%{"op" => "replace", "path" => "/title", "value" => "t2"}]
+    }
+
+    ref = Phoenix.ChannelTest.push(socket, "upload", update_params)
+    assert_reply ref, :ok, %{title: "t2"}
+    assert_push "change", _update_change
+
     # Publications: publish, publish_update, unpublish (request and reply).
     {:ok, source} =
       Documents.create_document(ctx.user.id, %{
@@ -241,7 +263,16 @@ defmodule ReplicantServer.Sync.WireContractTest do
         "publish_update_request" => request_frame("publish_update", publish_update_params),
         "publish_update_reply" => reply_frame(:ok, republished),
         "unpublish_request" => request_frame("unpublish", unpublish_params),
-        "unpublish_reply" => reply_frame(:ok, unpublished)
+        "unpublish_reply" => reply_frame(:ok, unpublished),
+        "socket_connect_params" => connect_params,
+        "join_request" => join_request_frame(join_params),
+        "changes_request" => request_frame("get_changes_since", changes_params),
+        "upload_create_request" => request_frame("upload", create_params),
+        "upload_update_request" => request_frame("upload", update_params),
+        "upload_delete_request" => request_frame("upload", delete_params),
+        "snapshot_request" => request_frame("get_snapshot", snapshot_params),
+        "snapshot_page_request" => request_frame("get_snapshot", snapshot_page_params),
+        "document_request" => request_frame("get_document", document_params)
       }
       |> normalize()
 
@@ -265,6 +296,16 @@ defmodule ReplicantServer.Sync.WireContractTest do
     decode(%Reply{join_ref: "1", ref: "2", topic: "sync:v2", status: status, payload: payload})
   end
 
+  defp join_request_frame(payload) do
+    decode(%Message{
+      join_ref: "1",
+      ref: "1",
+      topic: "sync:v2",
+      event: "phx_join",
+      payload: payload
+    })
+  end
+
   # A client request always carries a ref (it expects a matching reply); a
   # server-initiated push never does.
   defp request_frame(event, payload) do
@@ -280,10 +321,7 @@ defmodule ReplicantServer.Sync.WireContractTest do
     data |> IO.iodata_to_binary() |> Jason.decode!()
   end
 
-  # Seq-like values are normalised by rank, not to a single constant: every
-  # distinct value seen anywhere in the fixture maps to its ascending
-  # position (1, 2, 3, ...), so relationships like `prev_seq < seq` survive
-  # normalisation instead of collapsing to indistinguishable 1s.
+  # Replaces each seq-like value with its ascending rank among all of them, keeping their order.
   defp normalize(frames) do
     ranks =
       frames
@@ -297,13 +335,17 @@ defmodule ReplicantServer.Sync.WireContractTest do
   end
 
   defp collect_seqs(map) when is_map(map) do
-    Enum.flat_map(map, fn {k, v} ->
-      if(k in @seq_keys and is_integer(v), do: [v], else: []) ++ collect_seqs(v)
-    end)
+    Enum.flat_map(map, fn {k, v} -> own_seqs(k, v) ++ collect_seqs(v) end)
   end
 
   defp collect_seqs(list) when is_list(list), do: Enum.flat_map(list, &collect_seqs/1)
   defp collect_seqs(_value), do: []
+
+  defp own_seqs(key, value) when key in @seq_keys and is_integer(value), do: [value]
+  defp own_seqs(key, value) when key in @token_keys and is_binary(value), do: [token_seq(value)]
+  defp own_seqs(_key, _value), do: []
+
+  defp token_seq(token), do: token |> String.split(":") |> hd() |> String.to_integer()
 
   defp walk(map, ranks) when is_map(map),
     do: Map.new(map, fn {k, v} -> {k, walk(k, v, ranks)} end)
@@ -320,6 +362,16 @@ defmodule ReplicantServer.Sync.WireContractTest do
 
   defp walk(key, value, _ranks) when key in @time_keys and is_binary(value),
     do: "2026-01-01T00:00:00.000000Z"
+
+  defp walk(key, value, ranks) when key in @token_keys and is_binary(value),
+    do: "#{Map.fetch!(ranks, token_seq(value))}:#{@nil_uuid}"
+
+  defp walk("api_key", _value, _ranks), do: "<api_key>"
+
+  defp walk(key, value, _ranks) when key in @secret_hex_keys and is_binary(value),
+    do: String.replace(value, ~r/[0-9a-f]{64}\z/, String.duplicate("0", 64))
+
+  defp walk("timestamp", value, _ranks) when is_integer(value), do: 1_767_225_600
 
   defp walk(_key, value, ranks), do: walk(value, ranks)
 end

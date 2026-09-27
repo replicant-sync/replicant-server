@@ -11,12 +11,15 @@ defmodule ReplicantServer.Migrations.V2Data do
 
   alias ReplicantServer.Documents
 
-  # Ecto's :map content field can't load a non-object jsonb value (and a
-  # jsonb `null` literal would serialize as a hash the Rust client can't
-  # parse), so such rows are soft-deleted rather than published or curated.
+  # Ecto's :map content field can't load a non-object jsonb value, so such
+  # rows are soft-deleted with `{}` content; the original is kept at
+  # `provenance->'quarantined_content'`.
   @quarantine_bad_content """
-  UPDATE documents SET deleted_at = now()
-  WHERE jsonb_typeof(content) <> 'object' AND deleted_at IS NULL
+  UPDATE documents
+  SET content = '{}'::jsonb,
+      provenance = provenance || jsonb_build_object('quarantined_content', content),
+      deleted_at = COALESCE(deleted_at, now())
+  WHERE jsonb_typeof(content) <> 'object'
   """
 
   @publish_owned """

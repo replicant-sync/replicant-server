@@ -95,7 +95,9 @@ defmodule ReplicantServer.Sync.Channel do
          "api_key" => api_key,
          "signature" => signature,
          "timestamp" => timestamp
-       }) do
+       })
+       when is_binary(email) and is_binary(api_key) and is_binary(signature) and
+              is_integer(timestamp) do
     case Auth.verify_hmac(api_key, signature, timestamp, email) do
       {:ok, %{user_id: nil}} -> {:error, "auth_invalid"}
       {:ok, %{user_id: user_id}} -> {:ok, user_id}

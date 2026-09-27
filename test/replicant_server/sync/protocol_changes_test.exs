@@ -2,7 +2,9 @@ defmodule ReplicantServer.Sync.ProtocolChangesTest do
   use ReplicantServer.DataCase
 
   alias ReplicantServer.{Accounts, Documents, Scopes}
-  alias ReplicantServer.Sync.Protocol
+  alias ReplicantServer.Documents.Document
+  alias ReplicantServer.Feed.UploadResult
+  alias ReplicantServer.Sync.{Protocol, Upload}
 
   setup do
     {:ok, user} = Accounts.get_or_create_user("changes@example.com")
@@ -89,5 +91,62 @@ defmodule ReplicantServer.Sync.ProtocolChangesTest do
   test "a missing or negative cursor is validation", %{own: own} do
     assert {:error, %{code: "validation"}} = Protocol.changes_since(own, "own", %{})
     assert {:error, %{code: "validation"}} = page(own, -1)
+  end
+
+  test "a cursor beyond bigint range is validation", %{own: own} do
+    assert {:error, %{code: "validation", scope: "own"}} = page(own, 9_223_372_036_854_775_808)
+  end
+
+  test "a cursor past the feed head is cursor_too_old", %{own: own} do
+    assert {:error, %{code: "cursor_too_old", scope: "own"}} = page(own, 9_000_000_000_000)
+  end
+
+  defp upload_create(user, content) do
+    upload_id = Ecto.UUID.generate()
+
+    {:ok, reply} =
+      Upload.run(user.id, nil, %{
+        "upload_id" => upload_id,
+        "doc_id" => Ecto.UUID.generate(),
+        "kind" => "create",
+        "payload" => content
+      })
+
+    {upload_id, reply}
+  end
+
+  defp json(term), do: term |> Jason.encode!() |> Jason.decode!()
+
+  test "an upload's upsert carries the document as of that upload, not a later edit", %{
+    user: user,
+    own: own
+  } do
+    {upload_id, uploaded} = upload_create(user, %{"title" => "uploaded"})
+    doc = Repo.get!(Document, uploaded.doc_id)
+    {:ok, edited} = Documents.replace_content(doc, %{"title" => "web edit"})
+
+    assert {:ok, %{changes: [first, second]}} = page(own, 0)
+
+    assert %{upload_id: ^upload_id, seq: upload_seq} = first
+    assert upload_seq == uploaded.seq
+    assert json(first.doc) == json(uploaded)
+    assert %{"content" => %{"title" => "uploaded"}, "seq" => ^upload_seq} = json(first.doc)
+    assert json(first.doc)["hash"] == Documents.compute_hash(%{"title" => "uploaded"})
+
+    assert %{upload_id: nil, seq: edit_seq, doc: %{content: %{"title" => "web edit"}}} = second
+    assert edit_seq == edited.seq
+  end
+
+  test "an upload's upsert falls back to the current document when no reply is stored", %{
+    user: user,
+    own: own
+  } do
+    {upload_id, uploaded} = upload_create(user, %{"title" => "uploaded"})
+    doc = Repo.get!(Document, uploaded.doc_id)
+    {:ok, _edited} = Documents.replace_content(doc, %{"title" => "web edit"})
+    Repo.delete_all(from u in UploadResult, where: u.upload_id == ^upload_id)
+
+    assert {:ok, %{changes: [first, _second]}} = page(own, 0)
+    assert %{upload_id: ^upload_id, doc: %{content: %{"title" => "web edit"}}} = first
   end
 end
