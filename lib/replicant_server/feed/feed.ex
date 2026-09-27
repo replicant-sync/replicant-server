@@ -12,7 +12,11 @@ defmodule ReplicantServer.Feed do
   import Ecto.Query
 
   alias ReplicantServer.Repo
-  alias ReplicantServer.Feed.ChangeEvent
+  alias ReplicantServer.Feed.{ChangeEvent, UploadResult}
+
+  @retention_days 90
+
+  def retention_days, do: @retention_days
 
   def lock_scopes([]), do: :ok
 
@@ -82,6 +86,27 @@ defmodule ReplicantServer.Feed do
       has_more = rest != []
       next_cursor = if has_more, do: List.last(page).seq, else: max(head, cursor)
       %{events: page, next_cursor: next_cursor, has_more: has_more}
+    end)
+  end
+
+  def trim(days \\ @retention_days) do
+    cutoff = DateTime.add(DateTime.utc_now(), -days * 86_400, :second)
+
+    Repo.transaction(fn ->
+      cutoff_seq =
+        Repo.one(from e in ChangeEvent, where: e.inserted_at < ^cutoff, select: max(e.seq))
+
+      if cutoff_seq do
+        Repo.delete_all(from e in ChangeEvent, where: e.seq <= ^cutoff_seq)
+
+        Repo.update_all(
+          from(s in "change_feed_state", where: s.id == 1 and s.trim_watermark < ^cutoff_seq),
+          set: [trim_watermark: cutoff_seq]
+        )
+      end
+
+      Repo.delete_all(from u in UploadResult, where: u.inserted_at < ^cutoff)
+      cutoff_seq
     end)
   end
 
