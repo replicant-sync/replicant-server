@@ -4,9 +4,9 @@ defmodule ReplicantServer.Documents do
   """
 
   import Ecto.Query
-  alias Ecto.Multi
-  alias ReplicantServer.Repo
-  alias ReplicantServer.Documents.{Document, ChangeEvent}
+  alias ReplicantServer.{Feed, Repo, Scopes}
+  alias ReplicantServer.Collections.CollectionMember
+  alias ReplicantServer.Documents.Document
 
   @doc """
   Gets a document by ID.
@@ -22,16 +22,6 @@ defmodule ReplicantServer.Documents do
     Repo.one(
       from d in Document,
         where: d.id == ^document_id and d.user_id == ^user_id and is_nil(d.deleted_at)
-    )
-  end
-
-  @doc """
-  Gets a document by ID if owned by user, including soft-deleted documents.
-  """
-  def get_user_document_any(user_id, document_id) do
-    Repo.one(
-      from d in Document,
-        where: d.id == ^document_id and d.user_id == ^user_id
     )
   end
 
@@ -54,261 +44,197 @@ defmodule ReplicantServer.Documents do
   end
 
   @doc """
-  Creates a document with event logging in a transaction.
+  Creates a source document owned by `user_id`. Content is never deduplicated.
 
-  `opts` may include `:broadcast_from` — a pid to exclude from the
-  `sync:user:*` broadcast (the calling channel process, so the creating
-  client doesn't receive its own document_created back). Web/LiveView
-  callers omit it and every connected sync client is notified.
-
-  Returns `{:ok, document}` or `{:error, reason}` or `{:error, :conflict, existing_doc}`.
+  Returns `{:ok, document}`, `{:error, :conflict, existing}` when the id is
+  taken (live or deleted), or `{:error, :insert_failed}`.
   """
-  def create_document(user_id, attrs, opts \\ []) do
-    document_id = attrs[:id] || attrs["id"]
+  def create_document(user_id, attrs) do
+    run_write(fn -> do_create(user_id, attrs, %{}) end)
+    |> tap_ok(&broadcast("documents:user:#{user_id}", {:document_created, &1}))
+  end
+
+  @doc """
+  Applies a JSON Patch to a source document the user owns, checked against
+  `content_hash`. Returns `{:ok, document}`, `{:error, :hash_mismatch, current}`,
+  or `{:error, :missing_hash | :not_found | :forbidden | :invalid_patch}`.
+  """
+  def update_document(user_id, document_id, patch, content_hash) do
+    run_write(fn -> do_update(user_id, document_id, patch, content_hash, %{}) end)
+  end
+
+  @doc "Soft-deletes a source document the user owns; the row stays as a tombstone."
+  def delete_document(user_id, document_id) do
+    run_write(fn -> do_delete(user_id, document_id, %{}) end)
+    |> tap_ok(fn doc ->
+      broadcast("documents:#{doc.id}", {:document_deleted, doc})
+      broadcast("documents:user:#{user_id}", {:document_deleted, doc})
+    end)
+  end
+
+  @doc false
+  def run_write(fun) do
+    Repo.transaction(fn ->
+      case fun.() do
+        {:ok, doc, events} -> {doc, events}
+        error -> Repo.rollback(error)
+      end
+    end)
+    |> case do
+      {:ok, {doc, events}} ->
+        Feed.broadcast(events, doc)
+        {:ok, doc}
+
+      {:error, error} ->
+        error
+    end
+  end
+
+  @doc false
+  def do_create(user_id, attrs, meta) do
+    case Ecto.UUID.cast(attrs[:id] || attrs["id"]) do
+      {:ok, id} ->
+        scope = Scopes.own(user_id)
+        Feed.lock_scopes([scope])
+
+        case Repo.get(Document, id) do
+          %Document{} = existing -> {:error, :conflict, existing}
+          nil -> insert_source(user_id, id, attrs, scope, meta)
+        end
+
+      :error ->
+        {:error, :insert_failed}
+    end
+  end
+
+  defp insert_source(user_id, id, attrs, scope, meta) do
     content = attrs[:content] || attrs["content"]
-    content_hash = compute_hash(content)
+    hash = compute_hash(content)
+    {seq, events} = Feed.record([scope], event_attrs(id, "upsert", hash, meta))
 
-    case find_by_content_hash(user_id, content_hash) do
-      %Document{} = existing ->
-        {:ok, existing}
-
-      nil ->
-        author_name =
-          attrs[:author_name] || attrs["author_name"] || target_author_name(user_id)
-
-        Multi.new()
-        |> Multi.insert(:document, fn _ ->
-          %Document{}
-          |> Document.create_changeset(%{
-            id: document_id,
-            user_id: user_id,
-            content: content,
-            content_hash: content_hash,
-            title: extract_title(content),
-            author_name: author_name,
-            provenance: attrs[:provenance] || attrs["provenance"] || %{},
-            size_bytes: compute_size(content)
-          })
-        end)
-        |> Multi.insert(:event, fn %{document: doc} ->
-          %ChangeEvent{}
-          |> ChangeEvent.changeset(%{
-            document_id: doc.id,
-            user_id: user_id,
-            event_type: "create",
-            forward_patch: content
-          })
-        end)
-        |> Repo.transaction()
-        |> case do
-          {:ok, %{document: document}} ->
-            broadcast("documents:user:#{user_id}", {:document_created, document})
-
-            broadcast_to_sync_clients(
-              "sync:user:#{user_id}",
-              "document_created",
-              %{
-                id: document.id,
-                content: document.content,
-                sync_revision: document.sync_revision,
-                content_hash: document.content_hash
-              }
-              |> Map.merge(envelope_fields(document)),
-              opts
-            )
-
-            {:ok, document}
-
-          {:error, :document, %Ecto.Changeset{errors: errors}, _} ->
-            if Keyword.has_key?(errors, :id) do
-              case get_document(document_id) do
-                nil -> {:error, :insert_failed}
-                existing -> {:error, :conflict, existing}
-              end
-            else
-              {:error, :insert_failed}
-            end
-
-          {:error, _, _, _} ->
-            {:error, :insert_failed}
-        end
+    %Document{}
+    |> Document.create_changeset(%{
+      id: id,
+      user_id: user_id,
+      content: content,
+      content_hash: hash,
+      title: extract_title(content),
+      author_name: attrs[:author_name] || attrs["author_name"] || target_author_name(user_id),
+      provenance: attrs[:provenance] || attrs["provenance"] || %{},
+      size_bytes: compute_size(content)
+    })
+    |> Ecto.Changeset.put_change(:seq, seq)
+    |> Repo.insert()
+    |> case do
+      {:ok, doc} -> {:ok, doc, events}
+      {:error, _changeset} -> {:error, :insert_failed}
     end
   end
 
-  @doc """
-  Updates a document with content hash validation and event logging.
+  @doc false
+  def do_update(_user_id, _document_id, _patch, nil, _meta), do: {:error, :missing_hash}
 
-  The patch should be a JSON Patch (RFC 6902) operation list.
-  Validates that the client's content_hash matches the current document's hash
-  to ensure the client was working with the correct base content.
-  A nil content_hash is rejected rather than treated as "skip the check".
-
-  `opts` may include `:broadcast_from` — see `create_document/3`. Broadcasts
-  to `sync:user:*` (and `sync:public` when the document is public) itself;
-  `apply_update/2` stays broadcast-free since it's also called by
-  `replace_content/2`, which does its own unconditional broadcast.
-
-  Returns `{:ok, document}`, `{:error, :hash_mismatch, current_doc}`,
-  `{:error, :missing_hash}`, or `{:error, reason}`.
-  """
-  def update_document(user_id, document_id, patch, content_hash, opts \\ [])
-
-  def update_document(_user_id, _document_id, _patch, nil, _opts), do: {:error, :missing_hash}
-
-  def update_document(user_id, document_id, patch, content_hash, opts) do
-    case get_user_document(user_id, document_id) do
-      nil ->
-        {:error, :not_found}
-
-      document ->
-        if document.content_hash != content_hash do
-          {:error, :hash_mismatch, document}
-        else
-          case apply_update(document, patch) do
-            {:ok, updated} ->
-              payload = %{
-                id: updated.id,
-                patch: patch,
-                sync_revision: updated.sync_revision,
-                content_hash: updated.content_hash
-              }
-
-              broadcast_to_sync_clients("sync:user:#{user_id}", "document_updated", payload, opts)
-
-              if updated.visibility == "public" do
-                broadcast_to_sync_clients("sync:public", "document_updated", payload, opts)
-              end
-
-              {:ok, updated}
-
-            error ->
-              error
-          end
-        end
+  def do_update(user_id, document_id, patch, base_hash, meta) do
+    with {:ok, doc} <- lock_writable(user_id, document_id) do
+      if doc.content_hash != base_hash do
+        {:error, :hash_mismatch, doc}
+      else
+        with {:ok, content} <- apply_patch(patch, doc.content),
+             do: write_content(doc, content, meta)
+      end
     end
   end
 
-  @doc """
-  Applies a patch to a document, computing forward/reverse patches.
-  """
-  def apply_update(document, patch) do
-    normalized_patch = normalize_patch(patch)
+  @doc false
+  def do_delete(user_id, document_id, meta) do
+    with {:ok, doc} <- lock_writable(user_id, document_id), do: soft_delete(doc, meta)
+  end
 
-    case Jsonpatch.apply_patch(normalized_patch, document.content) do
-      {:ok, new_content} ->
-        reverse_patch = json_diff(new_content, document.content)
-
-        Multi.new()
-        |> Multi.update(:document, fn _ ->
-          document
-          |> Document.changeset(%{
-            content: new_content,
-            content_hash: compute_hash(new_content),
-            title: extract_title(new_content),
-            size_bytes: compute_size(new_content),
-            sync_revision: document.sync_revision + 1
-          })
-        end)
-        |> Multi.insert(:event, fn %{document: doc} ->
-          %ChangeEvent{}
-          |> ChangeEvent.changeset(%{
-            document_id: doc.id,
-            user_id: doc.user_id,
-            event_type: "update",
-            forward_patch: patch,
-            reverse_patch: reverse_patch
-          })
-        end)
-        |> Repo.transaction()
-        |> case do
-          {:ok, %{document: updated_doc}} ->
-            {:ok, updated_doc}
-
-          {:error, _, _, _} ->
-            {:error, :update_failed}
-        end
-
-      {:error, _} ->
-        {:error, :invalid_patch}
+  @doc false
+  def lock_document(document_id) do
+    case Ecto.UUID.cast(document_id) do
+      {:ok, id} -> Repo.one(from d in Document, where: d.id == ^id, lock: "FOR UPDATE")
+      :error -> nil
     end
   end
 
-  @doc """
-  Soft deletes a document with event logging.
+  @doc false
+  def write_content(%Document{} = doc, content, meta, extra \\ %{}) do
+    hash = compute_hash(content)
 
-  `opts` may include `:broadcast_from` — see `create_document/3`.
-  """
-  def delete_document(user_id, document_id, opts \\ []) do
-    case get_user_document(user_id, document_id) do
-      nil ->
-        {:error, :not_found}
+    {seq, events} =
+      Feed.record(Scopes.for_document(doc), event_attrs(doc.id, "upsert", hash, meta))
 
-      document ->
-        Multi.new()
-        |> Multi.update(:document, fn _ ->
-          document
-          |> Ecto.Changeset.change(deleted_at: DateTime.utc_now())
-        end)
-        |> Multi.insert(:event, fn _ ->
-          %ChangeEvent{}
-          |> ChangeEvent.changeset(%{
-            document_id: document.id,
-            user_id: user_id,
-            event_type: "delete",
-            reverse_patch: document.content
-          })
-        end)
-        |> Repo.transaction()
-        |> case do
-          {:ok, %{document: deleted_doc}} ->
-            delete_payload = %{id: deleted_doc.id}
-
-            broadcast("documents:#{deleted_doc.id}", {:document_deleted, deleted_doc})
-            broadcast("documents:user:#{user_id}", {:document_deleted, deleted_doc})
-
-            broadcast_to_sync_clients(
-              "sync:user:#{user_id}",
-              "document_deleted",
-              delete_payload,
-              opts
-            )
-
-            if deleted_doc.visibility == "public" do
-              broadcast("documents:public", {:document_deleted, deleted_doc})
-              broadcast_to_sync_clients("sync:public", "document_deleted", delete_payload, opts)
-            end
-
-            {:ok, deleted_doc}
-
-          {:error, _, _, _} ->
-            {:error, :delete_failed}
-        end
-    end
-  end
-
-  @doc """
-  Gets change events since a given sequence number.
-  """
-  def get_changes_since(user_id, last_sequence, limit \\ 100) do
-    Repo.all(
-      from e in ChangeEvent,
-        where: e.user_id == ^user_id and e.sequence > ^last_sequence,
-        order_by: [asc: e.sequence],
-        limit: ^limit,
-        preload: :document
+    doc
+    |> Document.changeset(
+      Map.merge(
+        %{
+          content: content,
+          content_hash: hash,
+          title: extract_title(content),
+          size_bytes: compute_size(content),
+          sync_revision: doc.sync_revision + 1,
+          seq: seq
+        },
+        extra
+      )
     )
+    |> Repo.update()
+    |> case do
+      {:ok, updated} -> {:ok, updated, events}
+      {:error, _changeset} -> {:error, :update_failed}
+    end
   end
 
-  @doc """
-  Gets the latest sequence number for a user.
-  """
-  def get_latest_sequence(user_id) do
-    Repo.one(
-      from e in ChangeEvent,
-        where: e.user_id == ^user_id,
-        select: max(e.sequence)
-    ) || 0
+  @doc false
+  def soft_delete(%Document{} = doc, meta) do
+    {seq, events} =
+      Feed.record(Scopes.for_document(doc), event_attrs(doc.id, "delete", nil, meta))
+
+    Repo.delete_all(from m in CollectionMember, where: m.document_id == ^doc.id)
+
+    {:ok, deleted} =
+      doc |> Ecto.Changeset.change(deleted_at: DateTime.utc_now(), seq: seq) |> Repo.update()
+
+    {:ok, deleted, events}
   end
+
+  defp lock_writable(user_id, document_id) do
+    case lock_document(document_id) do
+      nil -> {:error, :not_found}
+      %Document{deleted_at: %DateTime{}} -> {:error, :not_found}
+      %Document{user_id: ^user_id, read_only: false} = doc -> {:ok, doc}
+      %Document{} -> {:error, :forbidden}
+    end
+  end
+
+  defp apply_patch(patch, content) when is_list(patch) do
+    case Jsonpatch.apply_patch(normalize_patch(patch), content) do
+      {:ok, new_content} -> {:ok, new_content}
+      {:error, _} -> {:error, :invalid_patch}
+    end
+  rescue
+    _ -> {:error, :invalid_patch}
+  end
+
+  defp apply_patch(_patch, _content), do: {:error, :invalid_patch}
+
+  defp event_attrs(doc_id, kind, hash, meta) do
+    %{
+      doc_id: doc_id,
+      kind: kind,
+      hash: hash,
+      client_id: meta[:client_id],
+      upload_id: meta[:upload_id]
+    }
+  end
+
+  defp tap_ok({:ok, doc} = result, fun) do
+    fun.(doc)
+    result
+  end
+
+  defp tap_ok(result, _fun), do: result
 
   @doc """
   Computes SHA256 hash of content for verification.
@@ -472,14 +398,7 @@ defmodule ReplicantServer.Documents do
 
   # --- Document copying / sharing ---
 
-  @doc """
-  Copies a single document to another user.
-
-  Creates a new document under `target_user_id` with the same content.
-  Skips if an identical document (by content hash) already exists for the target user.
-
-  Returns `{:ok, document}` or `{:error, reason}`.
-  """
+  @doc "Copies a single document to another user as a new document."
   def copy_document_to_user(document_id, source_user_id, target_user_id) do
     case get_user_document(source_user_id, document_id) do
       nil -> {:error, :not_found}
@@ -508,10 +427,8 @@ defmodule ReplicantServer.Documents do
   end
 
   @doc """
-  Copies all documents from one user to another.
-
-  Skips documents that already exist for the target user (by content hash).
-  Returns `{:ok, %{copied: count, skipped: count}}`.
+  Copies all documents from one user to another. Returns `{:ok, %{copied: count, skipped: count}}`;
+  a copy is skipped only if its insert fails.
   """
   def copy_all_documents(source_user_id, target_user_id) do
     docs = list_user_documents(source_user_id)
@@ -585,16 +502,6 @@ defmodule ReplicantServer.Documents do
   end
 
   @doc """
-  Gets a public document by ID, including soft-deleted documents.
-  """
-  def get_public_document_any(id) do
-    Repo.one(
-      from d in Document,
-        where: d.id == ^id and d.visibility == "public"
-    )
-  end
-
-  @doc """
   Creates a public document (no user_id).
   """
   def create_public_document(attrs) do
@@ -621,19 +528,6 @@ defmodule ReplicantServer.Documents do
         |> case do
           {:ok, doc} ->
             broadcast("documents:public", {:document_created, doc})
-
-            broadcast_to_sync_clients(
-              "sync:public",
-              "document_created",
-              %{
-                id: doc.id,
-                content: doc.content,
-                sync_revision: doc.sync_revision,
-                content_hash: doc.content_hash
-              }
-              |> Map.merge(envelope_fields(doc))
-            )
-
             {:ok, doc}
 
           {:error, changeset} ->
@@ -643,44 +537,28 @@ defmodule ReplicantServer.Documents do
   end
 
   @doc """
-  Replaces a document's content entirely. Computes JSON Patch internally
-  so event history is preserved. Works for both user and public documents.
+  Replaces a document's content (source or publication) and emits an upsert to
+  every scope it belongs to. Unchanged content is a no-op.
   """
-  def replace_content(document, new_content) when is_map(new_content) do
-    patch = json_diff(document.content, new_content)
-
-    if patch == [] do
+  def replace_content(%Document{} = document, new_content) when is_map(new_content) do
+    if json_diff(document.content, new_content) == [] do
       {:ok, document}
     else
-      case apply_update(document, patch) do
-        {:ok, updated} ->
-          broadcast("documents:#{document.id}", {:document_updated, updated})
+      run_write(fn ->
+        case lock_document(document.id) do
+          %Document{deleted_at: nil} = locked -> write_content(locked, new_content, %{})
+          _ -> {:error, :not_found}
+        end
+      end)
+      |> tap_ok(fn updated ->
+        broadcast("documents:#{updated.id}", {:document_updated, updated})
 
-          if document.user_id do
-            broadcast("documents:user:#{document.user_id}", {:document_updated, updated})
-
-            broadcast_to_sync_clients("sync:user:#{document.user_id}", "document_updated", %{
-              id: updated.id,
-              patch: patch,
-              sync_revision: updated.sync_revision,
-              content_hash: updated.content_hash
-            })
-          else
-            broadcast("documents:public", {:document_updated, updated})
-
-            broadcast_to_sync_clients("sync:public", "document_updated", %{
-              id: updated.id,
-              patch: patch,
-              sync_revision: updated.sync_revision,
-              content_hash: updated.content_hash
-            })
-          end
-
-          {:ok, updated}
-
-        error ->
-          error
-      end
+        if updated.user_id do
+          broadcast("documents:user:#{updated.user_id}", {:document_updated, updated})
+        else
+          broadcast("documents:public", {:document_updated, updated})
+        end
+      end)
     end
   end
 
@@ -699,7 +577,6 @@ defmodule ReplicantServer.Documents do
         |> case do
           {:ok, doc} ->
             broadcast("documents:public", {:document_deleted, doc})
-            broadcast_to_sync_clients("sync:public", "document_deleted", %{id: doc.id})
             {:ok, doc}
 
           error ->
@@ -707,16 +584,6 @@ defmodule ReplicantServer.Documents do
         end
     end
   end
-
-  defp find_by_content_hash(user_id, content_hash) when is_binary(content_hash) do
-    Repo.one(
-      from d in Document,
-        where: d.user_id == ^user_id and d.content_hash == ^content_hash and is_nil(d.deleted_at),
-        limit: 1
-    )
-  end
-
-  defp find_by_content_hash(_user_id, _content_hash), do: nil
 
   defp find_public_by_content_hash(content_hash) when is_binary(content_hash) do
     Repo.one(
@@ -786,43 +653,16 @@ defmodule ReplicantServer.Documents do
     Phoenix.PubSub.broadcast(ReplicantServer.PubSub, topic, message)
   end
 
-  defp broadcast_to_sync_clients(topic, event, payload, opts \\ []) do
-    message = %Phoenix.Socket.Broadcast{topic: topic, event: event, payload: payload}
-
-    case Keyword.get(opts, :broadcast_from) do
-      nil ->
-        Phoenix.PubSub.broadcast(ReplicantServer.PubSub, topic, message)
-
-      from_pid ->
-        Phoenix.PubSub.broadcast_from(ReplicantServer.PubSub, from_pid, topic, message)
-    end
-  end
-
-  @doc """
-  Document-level attribution carried in every document-bearing sync envelope.
-  """
-  def envelope_fields(%Document{} = doc) do
-    %{
-      user_id: doc.user_id,
-      author_name: doc.author_name,
-      visibility: doc.visibility,
-      provenance: doc.provenance
-    }
-  end
-
   defp normalize_patch(patch) when is_list(patch) do
     Enum.map(patch, &normalize_operation/1)
   end
 
+  @patch_keys %{"op" => :op, "path" => :path, "value" => :value, "from" => :from}
+
   defp normalize_operation(op) when is_map(op) do
-    op
-    |> Map.new(fn
-      {"op", v} -> {:op, v}
-      {"path", v} -> {:path, v}
-      {"value", v} -> {:value, v}
-      {"from", v} -> {:from, v}
+    Map.new(op, fn
       {k, v} when is_atom(k) -> {k, v}
-      {k, v} -> {String.to_existing_atom(k), v}
+      {k, v} -> {Map.get(@patch_keys, k, k), v}
     end)
   end
 

@@ -1,208 +1,53 @@
 defmodule ReplicantServer.DocumentsBroadcastTest do
-  @moduledoc """
-  Tests that Documents context mutations broadcast to sync channel topics.
-
-  These verify the host-app → sync client broadcast path:
-  when a document is edited through the Documents context, the change
-  should be broadcast on the appropriate sync:* Phoenix Channel topic
-  so connected Replicant clients receive it in real time.
-  """
+  @moduledoc "Document writes reach sync clients via the change feed and host UIs via `documents:*` topics."
   use ReplicantServer.DataCase
 
-  alias ReplicantServer.{Accounts, Documents}
-
-  @endpoint ReplicantServer.Sync.TestEndpoint
+  alias ReplicantServer.{Accounts, Documents, Feed, Scopes}
 
   setup do
-    email = "broadcast-test@example.com"
-    {:ok, user} = Accounts.get_or_create_user(email)
-    %{user_id: user.id, email: email}
+    {:ok, user} = Accounts.get_or_create_user("broadcast-test@example.com")
+    Phoenix.PubSub.subscribe(ReplicantServer.PubSub, Feed.topic(Scopes.own(user.id)))
+    %{user: user}
   end
 
-  describe "create_document broadcasts to sync channels (non-channel origin)" do
-    test "broadcasts document_created to user sync channel with no exclusion", %{
-      user_id: user_id
-    } do
-      @endpoint.subscribe("sync:user:#{user_id}")
-
-      {:ok, doc} =
-        Documents.create_document(user_id, %{
-          "id" => Ecto.UUID.generate(),
-          "content" => %{"title" => "Created via web"}
-        })
-
-      assert_receive %Phoenix.Socket.Broadcast{
-        topic: "sync:user:" <> _,
-        event: "document_created",
-        payload: payload
-      }
-
-      assert payload.id == doc.id
-      assert payload.content == %{"title" => "Created via web"}
-    end
+  defp create(user, content) do
+    Documents.create_document(user.id, %{"id" => Ecto.UUID.generate(), "content" => content})
   end
 
-  describe "replace_content broadcasts to sync channels" do
-    test "broadcasts document_updated to user sync channel", %{user_id: user_id} do
-      # Create a user document
-      {:ok, doc} =
-        Documents.create_document(user_id, %{
-          "id" => Ecto.UUID.generate(),
-          "content" => %{"title" => "Original", "data" => "test"}
-        })
+  test "create broadcasts an upsert carrying the new document", %{user: user} do
+    {:ok, doc} = create(user, %{"title" => "Created via web"})
 
-      # Subscribe to the user's sync channel topic
-      @endpoint.subscribe("sync:user:#{user_id}")
+    assert_receive {:feed_change, %{kind: "upsert", seq: seq, doc_id: id},
+                    %{content: %{"title" => "Created via web"}}}
 
-      # Simulate web UI edit
-      {:ok, _updated} =
-        Documents.replace_content(doc, %{"title" => "Edited via web", "data" => "test"})
-
-      # Assert broadcast arrived on sync channel
-      assert_receive %Phoenix.Socket.Broadcast{
-        topic: "sync:user:" <> _,
-        event: "document_updated",
-        payload: payload
-      }
-
-      assert payload.id == doc.id
-      assert payload.sync_revision == 2
-      assert is_list(payload.patch)
-      assert payload.content_hash != nil
-    end
-
-    test "broadcasts document_updated to public sync channel for public docs" do
-      # Create a public document (no user_id)
-      {:ok, doc} =
-        Documents.create_public_document(%{
-          "content" => %{"title" => "Public Original"}
-        })
-
-      # Subscribe to public sync channel
-      @endpoint.subscribe("sync:public")
-
-      # Simulate web UI edit
-      {:ok, _updated} = Documents.replace_content(doc, %{"title" => "Public Edited"})
-
-      # Assert broadcast arrived on sync:public
-      assert_receive %Phoenix.Socket.Broadcast{
-        topic: "sync:public",
-        event: "document_updated",
-        payload: payload
-      }
-
-      assert payload.id == doc.id
-      assert payload.sync_revision == 2
-      assert is_list(payload.patch)
-    end
-
-    test "broadcast patch is JSON-serializable with RFC 6902 op fields", %{user_id: user_id} do
-      {:ok, doc} =
-        Documents.create_document(user_id, %{
-          "id" => Ecto.UUID.generate(),
-          "content" => %{"title" => "Before", "count" => 1}
-        })
-
-      @endpoint.subscribe("sync:user:#{user_id}")
-
-      {:ok, _updated} = Documents.replace_content(doc, %{"title" => "After", "count" => 2})
-
-      assert_receive %Phoenix.Socket.Broadcast{
-        event: "document_updated",
-        payload: payload
-      }
-
-      # Patch must be a list of plain maps (not Jsonpatch.Operation.* structs)
-      assert is_list(payload.patch)
-      assert length(payload.patch) > 0
-
-      for op <- payload.patch do
-        assert is_map(op), "patch operation must be a plain map"
-        assert Map.has_key?(op, :op), "patch operation must have :op key"
-        assert op.op in ["add", "remove", "replace", "move", "copy", "test"]
-        assert Map.has_key?(op, :path), "patch operation must have :path key"
-      end
-
-      # Must be JSON-encodable (would fail with Jsonpatch structs)
-      assert {:ok, _json} = Jason.encode(payload)
-    end
-
-    test "does not broadcast when content is unchanged", %{user_id: user_id} do
-      {:ok, doc} =
-        Documents.create_document(user_id, %{
-          "id" => Ecto.UUID.generate(),
-          "content" => %{"title" => "Same"}
-        })
-
-      @endpoint.subscribe("sync:user:#{user_id}")
-
-      # Replace with identical content
-      {:ok, _unchanged} = Documents.replace_content(doc, %{"title" => "Same"})
-
-      # No broadcast should fire
-      refute_receive %Phoenix.Socket.Broadcast{event: "document_updated"}, 100
-    end
+    assert {id, seq} == {doc.id, doc.seq}
   end
 
-  describe "create_public_document broadcasts to sync:public" do
-    test "broadcasts document_created on sync:public" do
-      @endpoint.subscribe("sync:public")
+  test "replace_content broadcasts an upsert; unchanged content broadcasts nothing", %{user: user} do
+    {:ok, doc} = create(user, %{"title" => "Original"})
+    assert_receive {:feed_change, _, _}
+    {:ok, updated} = Documents.replace_content(doc, %{"title" => "Updated"})
 
-      {:ok, doc} =
-        Documents.create_public_document(%{
-          "content" => %{"title" => "New Public Doc"}
-        })
+    assert_receive {:feed_change, %{kind: "upsert", seq: seq},
+                    %{content: %{"title" => "Updated"}}}
 
-      assert_receive %Phoenix.Socket.Broadcast{
-        topic: "sync:public",
-        event: "document_created",
-        payload: payload
-      }
-
-      assert payload.id == doc.id
-      assert payload.content == %{"title" => "New Public Doc"}
-      assert payload.sync_revision == 1
-      assert payload.content_hash != nil
-      assert payload.visibility == "public"
-      assert Map.has_key?(payload, :author_name)
-    end
+    assert seq == updated.seq
+    {:ok, _} = Documents.replace_content(updated, %{"title" => "Updated"})
+    refute_receive {:feed_change, _, _}
   end
 
-  describe "delete_public_document broadcasts to sync:public" do
-    test "broadcasts document_deleted on sync:public" do
-      {:ok, doc} =
-        Documents.create_public_document(%{
-          "content" => %{"title" => "To Delete"}
-        })
-
-      @endpoint.subscribe("sync:public")
-
-      {:ok, _deleted} = Documents.delete_public_document(doc.id)
-
-      assert_receive %Phoenix.Socket.Broadcast{
-        topic: "sync:public",
-        event: "document_deleted",
-        payload: payload
-      }
-
-      assert payload.id == doc.id
-    end
+  test "delete broadcasts a delete", %{user: user} do
+    {:ok, doc} = create(user, %{"title" => "Doomed"})
+    assert_receive {:feed_change, _, _}
+    {:ok, deleted} = Documents.delete_document(user.id, doc.id)
+    assert_receive {:feed_change, %{kind: "delete", seq: seq}, _}
+    assert seq == deleted.seq
   end
 
-  describe "sync broadcasts are delivered via ReplicantServer.PubSub (no web Endpoint dependency)" do
-    test "create_public_document delivers document_created through the library PubSub" do
-      Phoenix.PubSub.subscribe(ReplicantServer.PubSub, "sync:public")
-
-      {:ok, doc} =
-        Documents.create_public_document(%{"content" => %{"title" => "PubSub-direct"}})
-
-      assert_receive %Phoenix.Socket.Broadcast{
-        topic: "sync:public",
-        event: "document_created",
-        payload: payload
-      }
-
-      assert payload.id == doc.id
-    end
+  test "host UIs still get documents:user messages", %{user: user} do
+    Phoenix.PubSub.subscribe(ReplicantServer.PubSub, "documents:user:#{user.id}")
+    {:ok, doc} = create(user, %{"title" => "Web"})
+    assert_receive {:document_created, %{id: id}}
+    assert id == doc.id
   end
 end
