@@ -2,6 +2,7 @@ defmodule ReplicantServer.Factory.BackfillTest do
   use ReplicantServer.DataCase
 
   alias ReplicantServer.Accounts
+  alias ReplicantServer.Collections.CollectionMember
   alias ReplicantServer.Documents
   alias ReplicantServer.Factory.Backfill
 
@@ -48,17 +49,20 @@ defmodule ReplicantServer.Factory.BackfillTest do
     entonal = Accounts.get_user_by_email("factory@nodeaudio.com")
 
     partch = by_title["Partch 43-tone"]
-    assert partch.user_id == robert_rich.id
+    assert partch.author_id == robert_rich.id
     assert partch.author_name == "Robert Rich"
-    assert partch.visibility == "public"
+    assert partch.read_only
+    assert is_nil(partch.user_id)
 
     hexany = by_title["7-limit Hexany"]
-    assert hexany.user_id == sevish.id
+    assert hexany.author_id == sevish.id
     assert hexany.author_name == "Sevish"
 
     tet = by_title["12-TET"]
-    assert tet.user_id == entonal.id
+    assert tet.author_id == entonal.id
     assert tet.author_name == "Entonal"
+
+    assert Enum.all?(pubs, &Repo.get_by(CollectionMember, document_id: &1.id))
   end
 
   test "backfill raises a clear error when an override names an unknown contributor", %{dir: dir} do

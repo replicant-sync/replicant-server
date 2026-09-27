@@ -223,15 +223,14 @@ defmodule ReplicantServer.DocumentsTest do
     end
   end
 
-  describe "public document dedup" do
-    test "returns existing public document when content is identical" do
+  describe "create_public_document" do
+    test "identical public content creates two publications" do
       content = %{"title" => "Public Preset", "data" => [1, 2, 3]}
-
       {:ok, first} = Documents.create_public_document(%{content: content})
       {:ok, second} = Documents.create_public_document(%{content: content})
 
-      assert first.id == second.id
-      assert Documents.list_public_documents() |> length() == 1
+      assert first.id != second.id
+      assert Documents.list_public_documents() |> length() == 2
     end
 
     test "does not dedup public and user documents", %{user: user} do

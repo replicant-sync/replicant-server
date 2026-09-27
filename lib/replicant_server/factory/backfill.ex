@@ -1,14 +1,12 @@
 defmodule ReplicantServer.Factory.Backfill do
   @moduledoc """
-  Reads a directory of canonical preset JSONs and upserts each as an owned,
-  public document. Mints the resolved owner (contributor or system user) with a
+  Reads a directory of canonical preset JSONs and upserts each as a curated
+  publication. Mints the resolved owner (contributor or system user) with a
   display name, stamps `author_name`, and derives a stable per-slug document id
   so re-runs update in place instead of duplicating.
   """
 
-  import Ecto.Query
-
-  alias ReplicantServer.{Accounts, Repo}
+  alias ReplicantServer.{Accounts, Documents, Publications, Repo}
   alias ReplicantServer.Documents.Document
   alias ReplicantServer.Factory.Contributors
 
@@ -69,25 +67,24 @@ defmodule ReplicantServer.Factory.Backfill do
 
     doc_id = deterministic_doc_id(slug)
 
-    attrs = %{
-      id: doc_id,
-      user_id: owner.id,
-      content: content,
-      author_name: owner.display_name,
-      visibility: "public"
-    }
-
-    case Repo.one(from d in Document, where: d.id == ^doc_id) do
+    case Documents.get_document(doc_id) do
       nil ->
-        %Document{}
-        |> Document.create_changeset(attrs)
-        |> Repo.insert!()
+        {:ok, _pub} =
+          Publications.create_curated(%{
+            id: doc_id,
+            content: content,
+            author_id: owner.id,
+            author_name: owner.display_name
+          })
 
         :created
 
       %Document{} = existing ->
-        existing
-        |> Document.changeset(attrs)
+        {:ok, updated} = Documents.replace_content(existing, content)
+
+        # Author metadata is not part of the change feed; clients see it on the next content change.
+        updated
+        |> Ecto.Changeset.change(author_id: owner.id, author_name: owner.display_name)
         |> Repo.update!()
 
         :updated

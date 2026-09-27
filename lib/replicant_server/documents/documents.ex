@@ -4,7 +4,7 @@ defmodule ReplicantServer.Documents do
   """
 
   import Ecto.Query
-  alias ReplicantServer.{Feed, Repo, Scopes}
+  alias ReplicantServer.{Feed, Publications, Repo, Scopes}
   alias ReplicantServer.Collections.CollectionMember
   alias ReplicantServer.Documents.Document
 
@@ -127,6 +127,37 @@ defmodule ReplicantServer.Documents do
     |> Repo.insert()
     |> case do
       {:ok, doc} -> {:ok, doc, events}
+      {:error, _changeset} -> {:error, :insert_failed}
+    end
+  end
+
+  @doc false
+  def do_insert_publication(attrs) do
+    content = attrs.content
+    hash = compute_hash(content)
+    {seq, events} = Feed.record([], event_attrs(attrs.id, "upsert", hash, %{}))
+
+    %Document{}
+    |> Document.create_changeset(%{
+      id: attrs.id,
+      user_id: nil,
+      content: content,
+      content_hash: hash,
+      title: extract_title(content),
+      author_name: attrs[:author_name],
+      visibility: "public",
+      size_bytes: compute_size(content)
+    })
+    |> Ecto.Changeset.change(
+      read_only: true,
+      author_id: attrs[:author_id],
+      source_doc_id: attrs[:source_doc_id],
+      source_revision: attrs[:source_revision],
+      seq: seq
+    )
+    |> Repo.insert()
+    |> case do
+      {:ok, pub} -> {:ok, pub, events}
       {:error, _changeset} -> {:error, :insert_failed}
     end
   end
@@ -505,38 +536,16 @@ defmodule ReplicantServer.Documents do
   end
 
   @doc """
-  Creates a public document (no user_id).
+  Creates an authorless publication in `collection:curated` (the admin
+  "public document" flow). Identical content is not deduplicated.
   """
   def create_public_document(attrs) do
-    document_id = attrs[:id] || attrs["id"] || Ecto.UUID.generate()
-    content = attrs[:content] || attrs["content"]
-    content_hash = compute_hash(content)
-
-    case find_public_by_content_hash(content_hash) do
-      %Document{} = existing ->
-        {:ok, existing}
-
-      nil ->
-        %Document{}
-        |> Document.create_changeset(%{
-          id: document_id,
-          user_id: nil,
-          content: content,
-          content_hash: content_hash,
-          title: extract_title(content),
-          visibility: "public",
-          size_bytes: compute_size(content)
-        })
-        |> Repo.insert()
-        |> case do
-          {:ok, doc} ->
-            broadcast("documents:public", {:document_created, doc})
-            {:ok, doc}
-
-          {:error, changeset} ->
-            {:error, changeset}
-        end
-    end
+    %{
+      id: attrs[:id] || attrs["id"] || Ecto.UUID.generate(),
+      content: attrs[:content] || attrs["content"]
+    }
+    |> Publications.create_curated()
+    |> tap_ok(&broadcast("documents:public", {:document_created, &1}))
   end
 
   @doc """
@@ -565,39 +574,12 @@ defmodule ReplicantServer.Documents do
     end
   end
 
-  @doc """
-  Soft-deletes a public document.
-  """
+  @doc "Unpublishes a publication for every subscriber (admin)."
   def delete_public_document(document_id) do
-    case get_public_document(document_id) do
-      nil ->
-        {:error, :not_found}
-
-      document ->
-        document
-        |> Ecto.Changeset.change(deleted_at: DateTime.utc_now())
-        |> Repo.update()
-        |> case do
-          {:ok, doc} ->
-            broadcast("documents:public", {:document_deleted, doc})
-            {:ok, doc}
-
-          error ->
-            error
-        end
-    end
+    document_id
+    |> Publications.unpublish_any()
+    |> tap_ok(&broadcast("documents:public", {:document_deleted, &1}))
   end
-
-  defp find_public_by_content_hash(content_hash) when is_binary(content_hash) do
-    Repo.one(
-      from d in Document,
-        where:
-          d.visibility == "public" and d.content_hash == ^content_hash and is_nil(d.deleted_at),
-        limit: 1
-    )
-  end
-
-  defp find_public_by_content_hash(_content_hash), do: nil
 
   defp validate_field(nil, default), do: default
 
