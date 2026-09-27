@@ -3,8 +3,8 @@ defmodule ReplicantServer.Sync.Channel do
 
   use Phoenix.Channel
 
-  alias ReplicantServer.Auth
-  alias ReplicantServer.Sync.Envelope
+  alias ReplicantServer.{Auth, Feed, Scopes}
+  alias ReplicantServer.Sync.{Envelope, Protocol}
 
   require Logger
 
@@ -20,6 +20,47 @@ defmodule ReplicantServer.Sync.Channel do
       {:error, code} ->
         Logger.warning("Join rejected: #{code}")
         {:error, Envelope.error(code)}
+    end
+  end
+
+  @impl true
+  def handle_in("get_changes_since", params, socket) do
+    with_scope(params, socket, &Protocol.changes_since(&1, &2, params))
+  end
+
+  def handle_in(_event, _params, socket) do
+    {:reply, {:error, Envelope.error("validation")}, socket}
+  end
+
+  @impl true
+  def handle_info({:feed_change, event, doc}, socket) do
+    push(socket, "change", Envelope.change(event, doc, Scopes.to_wire(event.scope)))
+    {:noreply, socket}
+  end
+
+  # Subscribes before the handler reads, so a change committed after the read
+  # arrives as a push and none falls between.
+  defp with_scope(%{"scope" => wire_scope}, socket, handler) when is_binary(wire_scope) do
+    case Scopes.resolve(wire_scope, socket.assigns.user_id) do
+      {:ok, scope_key} ->
+        socket = subscribe_scope(socket, scope_key)
+        {:reply, handler.(scope_key, wire_scope), socket}
+
+      {:error, :subscription_forbidden} ->
+        {:reply, {:error, Envelope.error("subscription_forbidden", %{scope: wire_scope})}, socket}
+    end
+  end
+
+  defp with_scope(_params, socket, _handler) do
+    {:reply, {:error, Envelope.error("validation")}, socket}
+  end
+
+  defp subscribe_scope(socket, scope_key) do
+    if MapSet.member?(socket.assigns.scopes, scope_key) do
+      socket
+    else
+      :ok = Phoenix.PubSub.subscribe(ReplicantServer.PubSub, Feed.topic(scope_key))
+      assign(socket, :scopes, MapSet.put(socket.assigns.scopes, scope_key))
     end
   end
 

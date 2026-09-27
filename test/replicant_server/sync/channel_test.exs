@@ -1,6 +1,7 @@
 defmodule ReplicantServer.Sync.ChannelTest do
   use ReplicantServer.Sync.ChannelCase
 
+  alias ReplicantServer.Documents
   alias ReplicantServer.Sync.{Channel, Socket}
 
   setup do
@@ -77,6 +78,78 @@ defmodule ReplicantServer.Sync.ChannelTest do
     test "a credential with no user gets auth_invalid", %{ctx: ctx} do
       unenrolled = %{ctx | credential: insert_credential(nil)}
       assert {:error, %{code: "auth_invalid", is_fatal: true}} = join_sync(unenrolled)
+    end
+  end
+
+  describe "get_changes_since and pushes" do
+    setup %{ctx: ctx} do
+      {:ok, _, socket} = join_sync(ctx)
+      %{socket: socket}
+    end
+
+    defp catch_up(socket, scope) do
+      ref =
+        Phoenix.ChannelTest.push(socket, "get_changes_since", %{
+          "scope" => scope,
+          "cursor" => 0,
+          "limit" => 500
+        })
+
+      assert_reply ref, :ok, page
+      page
+    end
+
+    test "replies with a page, then pushes changes for that scope", %{ctx: ctx, socket: socket} do
+      assert %{changes: [], has_more: false} = catch_up(socket, "own")
+
+      {:ok, doc} =
+        Documents.create_document(ctx.user.id, %{id: Ecto.UUID.generate(), content: %{"t" => 1}})
+
+      id = doc.id
+
+      assert_push "change", %{
+        scope: "own",
+        kind: "upsert",
+        doc_id: ^id,
+        doc: %{doc_id: ^id},
+        client_id: nil
+      }
+    end
+
+    test "does not push scopes the client has not caught up", %{ctx: ctx} do
+      {:ok, _} = Documents.create_document(ctx.user.id, %{id: Ecto.UUID.generate(), content: %{}})
+      refute_push "change", _
+    end
+
+    test "does not push other users' own scopes", %{socket: socket} do
+      catch_up(socket, "own")
+      other = mint_user("channel-other@example.com")
+
+      {:ok, _} =
+        Documents.create_document(other.user.id, %{id: Ecto.UUID.generate(), content: %{}})
+
+      refute_push "change", _
+    end
+
+    test "an unknown scope is subscription_forbidden", %{socket: socket} do
+      ref =
+        Phoenix.ChannelTest.push(socket, "get_changes_since", %{
+          "scope" => "collection:nope",
+          "cursor" => 0
+        })
+
+      assert_reply ref, :error, %{
+        code: "subscription_forbidden",
+        is_fatal: false,
+        scope: "collection:nope"
+      }
+    end
+
+    test "unknown events and missing scopes are validation", %{socket: socket} do
+      ref = Phoenix.ChannelTest.push(socket, "request_full_sync", %{})
+      assert_reply ref, :error, %{code: "validation"}
+      ref = Phoenix.ChannelTest.push(socket, "get_changes_since", %{"cursor" => 0})
+      assert_reply ref, :error, %{code: "validation"}
     end
   end
 end
