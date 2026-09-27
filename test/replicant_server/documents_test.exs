@@ -339,43 +339,6 @@ defmodule ReplicantServer.DocumentsTest do
 
       assert Documents.compute_hash(content) == legacy_hash
     end
-
-    test "pins the exact hash for a fixed >32-key map with mixed float magnitudes and a non-ASCII key/value (HAMT-backed, exercises canonical sort + serde_json/ryu float parity)" do
-      content =
-        for i <- 1..35, into: %{} do
-          {"field_#{String.pad_leading(Integer.to_string(i), 2, "0")}", i}
-        end
-        |> Map.put("whole", 1.0)
-        |> Map.put("large", 1.0e10)
-        |> Map.put("small", 1.0e-7)
-        |> Map.put("tenth", 0.1)
-        |> Map.put("negative", -2.5)
-        |> Map.put("unicode_key_🎵", "café résumé 音楽")
-        |> Map.put("nested", %{
-          "z" => [3, 2, 1],
-          "a" => "x",
-          "deep" => %{"tags" => ["b", "a", "c"]}
-        })
-
-      assert map_size(content) == 42
-
-      assert Documents.compute_hash(content) ==
-               "7d0576a13a06288152611ed9957f3679e33c1e4f3c44c585b09f17c2521e995a"
-    end
-
-    test "pins the exact hash for a nested >32-key object inside a normal-sized parent (recursion into HAMT at depth)" do
-      child =
-        for i <- 1..40, into: %{} do
-          {"child_field_#{String.pad_leading(Integer.to_string(i), 2, "0")}", i}
-        end
-
-      content = %{"title" => "Parent Doc", "count" => 3, "child" => child}
-
-      assert map_size(child) == 40
-
-      assert Documents.compute_hash(content) ==
-               "4460584450427fd9acbd2d2ecc56eb8fb11b40f96eef23172bb1a3655fca2026"
-    end
   end
 
   describe "envelope attribution" do

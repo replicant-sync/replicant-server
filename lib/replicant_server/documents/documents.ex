@@ -316,9 +316,10 @@ defmodule ReplicantServer.Documents do
   Encodes with explicit key-sorted, compact JSON at every nesting level
   (`canonical_json/1`) rather than relying on `Jason.encode!/1`'s default map
   iteration order. Erlang's small maps (<=32 keys) happen to iterate in
-  sorted term order already, so this is byte-identical to the previous plain
-  `Jason.encode!/1` call for such maps and existing stored `content_hash`
-  values remain valid. Maps larger than 32 keys switch to an unordered HAMT
+  sorted term order already, so this is byte-identical to plain
+  `Jason.encode!/1` only for small maps whose strings contain no control
+  characters; existing stored `content_hash` values for such maps remain
+  valid. Maps larger than 32 keys switch to an unordered HAMT
   representation, where the old approach could silently disagree with the
   Rust client's `BTreeMap`-backed encoder; explicit sorting fixes that case.
   """
@@ -335,7 +336,7 @@ defmodule ReplicantServer.Documents do
     value
     |> Enum.map(fn {k, v} -> {to_string(k), canonical_json(v)} end)
     |> Enum.sort_by(&elem(&1, 0))
-    |> Enum.map_join(",", fn {k, v} -> "#{Jason.encode!(k)}:#{v}" end)
+    |> Enum.map_join(",", fn {k, v} -> "#{encode_string(k)}:#{v}" end)
     |> then(&"{#{&1}}")
   end
 
@@ -348,7 +349,30 @@ defmodule ReplicantServer.Documents do
 
   defp canonical_json(value) when is_float(value), do: format_float(value)
 
+  defp canonical_json(value) when is_binary(value), do: encode_string(value)
+
   defp canonical_json(value), do: Jason.encode!(value)
+
+  # serde_json's escaping: short escapes for " \ \b \f \n \r \t, lowercase
+  # \u00xx for other control characters, everything else verbatim.
+  defp encode_string(string) do
+    escaped =
+      for <<c::utf8 <- string>>, into: "" do
+        case c do
+          ?" -> "\\\""
+          ?\\ -> "\\\\"
+          ?\b -> "\\b"
+          ?\f -> "\\f"
+          ?\n -> "\\n"
+          ?\r -> "\\r"
+          ?\t -> "\\t"
+          c when c < 0x20 -> "\\u00" <> String.downcase(Base.encode16(<<c>>))
+          c -> <<c::utf8>>
+        end
+      end
+
+    "\"" <> escaped <> "\""
+  end
 
   # Renders a float exactly as Rust's `ryu` crate does (what serde_json uses
   # for every f64), so document hashes agree across languages at magnitudes
