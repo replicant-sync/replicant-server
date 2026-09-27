@@ -7,7 +7,17 @@ defmodule ReplicantServer.Migrations.V2Data do
   backfilled: v2 clients start from a snapshot.
   """
 
+  require Logger
+
   alias ReplicantServer.Documents
+
+  # Ecto's :map content field can't load a non-object jsonb value (and a
+  # jsonb `null` literal would serialize as a hash the Rust client can't
+  # parse), so such rows are soft-deleted rather than published or curated.
+  @quarantine_bad_content """
+  UPDATE documents SET deleted_at = now()
+  WHERE jsonb_typeof(content) <> 'object' AND deleted_at IS NULL
+  """
 
   @publish_owned """
   UPDATE documents
@@ -40,6 +50,14 @@ defmodule ReplicantServer.Migrations.V2Data do
   @assign_seqs "UPDATE documents SET seq = nextval('change_seq') WHERE seq = 0"
 
   def run(repo) do
+    %{num_rows: quarantined} = query!(repo, @quarantine_bad_content)
+
+    if quarantined > 0 do
+      Logger.warning(
+        "V2Data: quarantined #{quarantined} document(s) with non-object jsonb content"
+      )
+    end
+
     for sql <- [
           @publish_owned,
           @publish_deleted_owned,
@@ -47,20 +65,24 @@ defmodule ReplicantServer.Migrations.V2Data do
           @seed_curated,
           @assign_seqs
         ],
-        do: repo.query!(sql)
+        do: query!(repo, sql)
 
     rehash(repo)
     :ok
   end
 
   defp rehash(repo) do
-    %{rows: rows} = repo.query!("SELECT id, content, content_hash FROM documents")
+    %{rows: rows} = query!(repo, "SELECT id, content, content_hash FROM documents")
 
     Enum.each(rows, fn [id, content, stored] ->
       hash = Documents.compute_hash(content)
 
       if hash != stored,
-        do: repo.query!("UPDATE documents SET content_hash = $1 WHERE id = $2", [hash, id])
+        do: query!(repo, "UPDATE documents SET content_hash = $1 WHERE id = $2", [hash, id])
     end)
   end
+
+  # Boot-time migration: a slow full-table statement must not hit the
+  # default statement timeout and roll back.
+  defp query!(repo, sql, params \\ []), do: repo.query!(sql, params, timeout: :infinity)
 end

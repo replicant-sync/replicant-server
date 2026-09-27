@@ -28,28 +28,36 @@ defmodule ReplicantServer.Migrations.V2DataTest do
     )
   end
 
-  # Bypasses Document's :map-typed content field to insert a legacy row whose
-  # jsonb content is not a JSON object, the way an old client bug might have.
-  # Ecto's :map type refuses to load such a row, so this (and the assertions
-  # against it) stay on raw SQL rather than `Repo.get!/2`.
+  # A legacy row whose jsonb content is not a JSON object (Ecto's :map type
+  # can't load it), inserted via raw SQL to bypass the schema.
   defp legacy_nonmap_content(user_id) do
+    insert_raw_content(user_id, "[\"legacy\",\"array\"]")
+  end
+
+  # A legacy row whose jsonb content is the JSON `null` literal.
+  defp legacy_null_content(user_id) do
+    insert_raw_content(user_id, "null")
+  end
+
+  defp insert_raw_content(user_id, json) do
     id = Ecto.UUID.generate()
 
     Repo.query!(
       "INSERT INTO documents (id, user_id, content, visibility, created_at, updated_at) VALUES ($1, $2, $3::jsonb, 'public', now(), now())",
-      [Ecto.UUID.dump!(id), Ecto.UUID.dump!(user_id), "[\"legacy\",\"array\"]"]
+      [Ecto.UUID.dump!(id), Ecto.UUID.dump!(user_id), json]
     )
 
     %{id: id}
   end
 
   defp raw_document(id) do
-    %{rows: [[seq, read_only, content_hash]]} =
-      Repo.query!("SELECT seq, read_only, content_hash FROM documents WHERE id = $1", [
-        Ecto.UUID.dump!(id)
-      ])
+    %{rows: [[seq, read_only, content_hash, deleted_at]]} =
+      Repo.query!(
+        "SELECT seq, read_only, content_hash, deleted_at FROM documents WHERE id = $1",
+        [Ecto.UUID.dump!(id)]
+      )
 
-    %{seq: seq, read_only: read_only, content_hash: content_hash}
+    %{seq: seq, read_only: read_only, content_hash: content_hash, deleted_at: deleted_at}
   end
 
   setup do
@@ -74,7 +82,8 @@ defmodule ReplicantServer.Migrations.V2DataTest do
           visibility: "public",
           content: %{"title" => "Odd float", "value" => 5.0}
         ),
-      nonmap: legacy_nonmap_content(author.id)
+      nonmap: legacy_nonmap_content(author.id),
+      jsonb_null: legacy_null_content(author.id)
     }
 
     count_before = Repo.aggregate(Document, :count)
@@ -107,26 +116,41 @@ defmodule ReplicantServer.Migrations.V2DataTest do
     ownerless: ownerless,
     deleted: deleted,
     null_hash: null_hash,
-    odd_float: odd_float,
-    nonmap: nonmap
+    odd_float: odd_float
   } do
     members = curated_members()
-
-    assert Enum.sort(members) ==
-             Enum.sort([owned.id, ownerless.id, null_hash.id, odd_float.id, nonmap.id])
-
+    assert Enum.sort(members) == Enum.sort([owned.id, ownerless.id, null_hash.id, odd_float.id])
     assert Repo.get!(Document, deleted.id).read_only
   end
 
-  test "every document gets a seq and a recomputed hash", %{nonmap: nonmap} do
-    for doc <- Repo.all(from d in Document, where: d.id != ^nonmap.id) do
+  test "non-object jsonb content is quarantined instead of curated or hashed", %{
+    nonmap: nonmap,
+    jsonb_null: jsonb_null
+  } do
+    for id <- [nonmap.id, jsonb_null.id] do
+      row = raw_document(id)
+      refute is_nil(row.deleted_at)
+      assert is_nil(row.content_hash)
+      assert row.seq > 0
+      refute id in curated_members()
+    end
+  end
+
+  test "every live document gets a seq and a recomputed non-nil hash", %{
+    nonmap: nonmap,
+    jsonb_null: jsonb_null
+  } do
+    excluded = [nonmap.id, jsonb_null.id]
+
+    for doc <- Repo.all(from d in Document, where: d.id not in ^excluded and is_nil(d.deleted_at)) do
       assert doc.seq > 0
+      refute is_nil(doc.content_hash)
       assert doc.content_hash == Documents.compute_hash(doc.content)
     end
   end
 
   test "legacy odd/missing data still ends with a recomputed hash and a seq",
-       %{null_hash: null_hash, odd_float: odd_float, nonmap: nonmap} do
+       %{null_hash: null_hash, odd_float: odd_float} do
     for id <- [null_hash.id, odd_float.id] do
       doc = Repo.get!(Document, id)
       assert doc.seq > 0
@@ -134,14 +158,6 @@ defmodule ReplicantServer.Migrations.V2DataTest do
       refute is_nil(doc.content_hash)
       assert doc.content_hash == Documents.compute_hash(doc.content)
     end
-
-    # Non-map jsonb content has no canonical hash by definition (and Ecto's
-    # :map field can't even load it), but the migration must still assign it
-    # a seq without crashing.
-    nonmap_row = raw_document(nonmap.id)
-    assert nonmap_row.seq > 0
-    assert nonmap_row.read_only
-    assert is_nil(nonmap_row.content_hash)
   end
 
   test "private documents stay private and owned", %{private: p} do
@@ -150,15 +166,16 @@ defmodule ReplicantServer.Migrations.V2DataTest do
     assert doc.user_id == p.user_id
   end
 
-  test "re-running changes nothing", %{nonmap: nonmap} do
-    query = from d in Document, where: d.id != ^nonmap.id, order_by: d.id
+  test "re-running changes nothing", %{nonmap: nonmap, jsonb_null: jsonb_null} do
+    excluded = [nonmap.id, jsonb_null.id]
+    query = from d in Document, where: d.id not in ^excluded, order_by: d.id
     before = Repo.all(query)
-    before_nonmap = raw_document(nonmap.id)
+    before_raw = Enum.map(excluded, &raw_document/1)
 
     assert :ok = V2Data.run(Repo)
 
     assert Repo.all(query) == before
-    assert raw_document(nonmap.id) == before_nonmap
+    assert Enum.map(excluded, &raw_document/1) == before_raw
   end
 
   test "re-running after a v2 publication exists does not curate it", %{author: author} do
