@@ -71,6 +71,33 @@ defmodule ReplicantServer.Sync.Protocol do
 
   defp decode_token(_token), do: :error
 
+  def get_document(user_id, %{"doc_id" => doc_id}) when is_binary(doc_id) do
+    with {:ok, id} <- Ecto.UUID.cast(doc_id),
+         %Document{} = doc <- Repo.get(Document, id),
+         true <- readable?(doc, user_id) do
+      get_document_reply(doc)
+    else
+      _ -> {:error, Envelope.error("not_found", %{doc_id: doc_id})}
+    end
+  end
+
+  def get_document(_user_id, params) do
+    {:error, Envelope.error("validation", %{doc_id: safe_doc_id(params)})}
+  end
+
+  defp get_document_reply(%Document{deleted_at: nil} = doc), do: {:ok, Envelope.doc(doc)}
+
+  defp get_document_reply(%Document{deleted_at: %DateTime{}} = doc) do
+    {:error, Envelope.error("deleted", %{doc_id: doc.id, current_seq: doc.seq})}
+  end
+
+  defp readable?(%Document{user_id: user_id}, user_id), do: true
+  defp readable?(%Document{read_only: true}, _user_id), do: true
+  defp readable?(_doc, _user_id), do: false
+
+  defp safe_doc_id(%{"doc_id" => doc_id}) when is_binary(doc_id), do: doc_id
+  defp safe_doc_id(_params), do: nil
+
   defp load_docs([]), do: %{}
 
   defp load_docs(ids) do

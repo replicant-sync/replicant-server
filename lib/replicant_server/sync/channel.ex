@@ -36,6 +36,10 @@ defmodule ReplicantServer.Sync.Channel do
     {:reply, Upload.run(socket.assigns.user_id, socket.assigns.client_id, params), socket}
   end
 
+  def handle_in("get_document", params, socket) do
+    {:reply, Protocol.get_document(socket.assigns.user_id, params), socket}
+  end
+
   def handle_in(_event, _params, socket) do
     {:reply, {:error, Envelope.error("validation")}, socket}
   end
