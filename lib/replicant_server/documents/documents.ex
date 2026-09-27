@@ -385,7 +385,10 @@ defmodule ReplicantServer.Documents do
   end
 
   defp extract_title(content) when is_map(content) do
-    content["title"] || content[:title]
+    case content["title"] || content[:title] do
+      title when is_binary(title) -> title
+      _ -> nil
+    end
   end
 
   defp extract_title(_), do: nil

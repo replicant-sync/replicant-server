@@ -103,6 +103,13 @@ defmodule ReplicantServer.DocumentsTest do
 
       assert existing.id == doc_id
     end
+
+    test "a non-string title does not fail the insert", %{user: user} do
+      assert {:ok, doc} =
+               Documents.create_document(user.id, %{id: UUID.uuid4(), content: %{"title" => 123}})
+
+      assert doc.title == nil
+    end
   end
 
   describe "update_document" do
