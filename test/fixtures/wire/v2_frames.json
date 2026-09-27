@@ -17,7 +17,7 @@
         "hash": "8064ca1f4788d8c96d8e65d48b6a91e6ba8c594c6b6394fdd48752b3eea1ce11",
         "owner_id": "00000000-0000-0000-0000-000000000000",
         "read_only": false,
-        "seq": 1,
+        "seq": 3,
         "source_doc_id": null,
         "title": "Wire",
         "updated_at": "2026-01-01T00:00:00.000000Z"
@@ -26,7 +26,23 @@
       "kind": "upsert",
       "prev_seq": 1,
       "scope": "own",
-      "seq": 1,
+      "seq": 3,
+      "upload_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "change_push_delete": [
+    "1",
+    null,
+    "sync:v2",
+    "change",
+    {
+      "client_id": "00000000-0000-0000-0000-000000000000",
+      "doc": null,
+      "doc_id": "00000000-0000-0000-0000-000000000000",
+      "kind": "delete",
+      "prev_seq": 3,
+      "scope": "own",
+      "seq": 4,
       "upload_id": "00000000-0000-0000-0000-000000000000"
     }
   ],
@@ -39,7 +55,32 @@
       "response": {
         "changes": [],
         "has_more": false,
-        "next_cursor": 1
+        "next_cursor": 2
+      },
+      "status": "ok"
+    }
+  ],
+  "changes_reply_populated": [
+    "1",
+    "2",
+    "sync:v2",
+    "phx_reply",
+    {
+      "response": {
+        "changes": [
+          {
+            "client_id": "00000000-0000-0000-0000-000000000000",
+            "doc": null,
+            "doc_id": "00000000-0000-0000-0000-000000000000",
+            "kind": "delete",
+            "prev_seq": 3,
+            "scope": "own",
+            "seq": 4,
+            "upload_id": "00000000-0000-0000-0000-000000000000"
+          }
+        ],
+        "has_more": false,
+        "next_cursor": 4
       },
       "status": "ok"
     }
@@ -66,7 +107,7 @@
     {
       "response": {
         "code": "deleted",
-        "current_seq": 1,
+        "current_seq": 4,
         "doc_id": "00000000-0000-0000-0000-000000000000",
         "is_fatal": false
       },
@@ -90,7 +131,7 @@
         "hash": "8064ca1f4788d8c96d8e65d48b6a91e6ba8c594c6b6394fdd48752b3eea1ce11",
         "owner_id": "00000000-0000-0000-0000-000000000000",
         "read_only": false,
-        "seq": 1,
+        "seq": 3,
         "source_doc_id": null,
         "title": "Wire",
         "updated_at": "2026-01-01T00:00:00.000000Z"
@@ -131,7 +172,33 @@
         "hash": "755185a61fa7ed1f9260bdb2b5f819ce9ff06e52870c546f9258da27f7a6ffe4",
         "owner_id": "00000000-0000-0000-0000-000000000000",
         "read_only": false,
-        "seq": 1,
+        "seq": 5,
+        "source_doc_id": null,
+        "title": "t",
+        "updated_at": "2026-01-01T00:00:00.000000Z"
+      },
+      "status": "ok"
+    }
+  ],
+  "float_upload_reply": [
+    "1",
+    "2",
+    "sync:v2",
+    "phx_reply",
+    {
+      "response": {
+        "author_id": null,
+        "content": {
+          "cents": 1.2e3,
+          "title": "t"
+        },
+        "created_at": "2026-01-01T00:00:00.000000Z",
+        "derived_from": null,
+        "doc_id": "00000000-0000-0000-0000-000000000000",
+        "hash": "755185a61fa7ed1f9260bdb2b5f819ce9ff06e52870c546f9258da27f7a6ffe4",
+        "owner_id": "00000000-0000-0000-0000-000000000000",
+        "read_only": false,
+        "seq": 5,
         "source_doc_id": null,
         "title": "t",
         "updated_at": "2026-01-01T00:00:00.000000Z"
@@ -148,7 +215,7 @@
       "response": {
         "code": "hash_mismatch",
         "current_hash": "8064ca1f4788d8c96d8e65d48b6a91e6ba8c594c6b6394fdd48752b3eea1ce11",
-        "current_seq": 1,
+        "current_seq": 3,
         "doc_id": "00000000-0000-0000-0000-000000000000",
         "is_fatal": false
       },
@@ -157,7 +224,7 @@
   ],
   "join_error_reply": [
     "1",
-    "2",
+    "1",
     "sync:v2",
     "phx_reply",
     {
@@ -170,7 +237,7 @@
   ],
   "join_reply": [
     "1",
-    "2",
+    "1",
     "sync:v2",
     "phx_reply",
     {
@@ -198,7 +265,7 @@
         "hash": "c26b4137750a2673dede40fdfd820e3c810f5148a3aceeab3f27dd688cd05feb",
         "owner_id": null,
         "read_only": true,
-        "seq": 1,
+        "seq": 6,
         "source_doc_id": "00000000-0000-0000-0000-000000000000",
         "title": "Source",
         "updated_at": "2026-01-01T00:00:00.000000Z"
@@ -208,7 +275,7 @@
   ],
   "publish_request": [
     "1",
-    null,
+    "2",
     "sync:v2",
     "publish",
     {
@@ -232,7 +299,7 @@
         "hash": "c26b4137750a2673dede40fdfd820e3c810f5148a3aceeab3f27dd688cd05feb",
         "owner_id": null,
         "read_only": true,
-        "seq": 1,
+        "seq": 7,
         "source_doc_id": "00000000-0000-0000-0000-000000000000",
         "title": "Source",
         "updated_at": "2026-01-01T00:00:00.000000Z"
@@ -242,7 +309,7 @@
   ],
   "publish_update_request": [
     "1",
-    null,
+    "2",
     "sync:v2",
     "publish_update",
     {
@@ -268,14 +335,14 @@
             "hash": "8064ca1f4788d8c96d8e65d48b6a91e6ba8c594c6b6394fdd48752b3eea1ce11",
             "owner_id": "00000000-0000-0000-0000-000000000000",
             "read_only": false,
-            "seq": 1,
+            "seq": 3,
             "source_doc_id": null,
             "title": "Wire",
             "updated_at": "2026-01-01T00:00:00.000000Z"
           }
         ],
         "next_page_token": null,
-        "snapshot_seq": 1
+        "snapshot_seq": 3
       },
       "status": "ok"
     }
@@ -329,7 +396,7 @@
         "hash": "c26b4137750a2673dede40fdfd820e3c810f5148a3aceeab3f27dd688cd05feb",
         "owner_id": null,
         "read_only": true,
-        "seq": 1,
+        "seq": 8,
         "source_doc_id": "00000000-0000-0000-0000-000000000000",
         "title": "Source",
         "updated_at": "2026-01-01T00:00:00.000000Z"
@@ -339,7 +406,7 @@
   ],
   "unpublish_request": [
     "1",
-    null,
+    "2",
     "sync:v2",
     "unpublish",
     {
@@ -363,7 +430,7 @@
         "hash": "8064ca1f4788d8c96d8e65d48b6a91e6ba8c594c6b6394fdd48752b3eea1ce11",
         "owner_id": "00000000-0000-0000-0000-000000000000",
         "read_only": false,
-        "seq": 1,
+        "seq": 3,
         "source_doc_id": null,
         "title": "Wire",
         "updated_at": "2026-01-01T00:00:00.000000Z"
