@@ -6,7 +6,7 @@ defmodule ReplicantServer.Factory.Backfill do
   so re-runs update in place instead of duplicating.
   """
 
-  alias ReplicantServer.{Accounts, Documents, Publications, Repo}
+  alias ReplicantServer.{Accounts, Documents, Publications}
   alias ReplicantServer.Documents.Document
   alias ReplicantServer.Factory.Contributors
 
@@ -80,12 +80,24 @@ defmodule ReplicantServer.Factory.Backfill do
         :created
 
       %Document{} = existing ->
-        {:ok, updated} = Documents.replace_content(existing, content)
+        author_changed =
+          existing.author_id != owner.id or existing.author_name != owner.display_name
 
-        # Author metadata is not part of the change feed; clients see it on the next content change.
-        updated
-        |> Ecto.Changeset.change(author_id: owner.id, author_name: owner.display_name)
-        |> Repo.update!()
+        if existing.content != content or author_changed do
+          {:ok, _updated} =
+            Documents.run_write(fn ->
+              case Documents.lock_document(doc_id) do
+                %Document{deleted_at: nil} = locked ->
+                  Documents.write_content(locked, content, %{}, %{
+                    author_id: owner.id,
+                    author_name: owner.display_name
+                  })
+
+                _ ->
+                  {:error, :not_found}
+              end
+            end)
+        end
 
         :updated
     end

@@ -52,6 +52,12 @@ defmodule ReplicantServer.CollectionsTest do
     assert {:error, :not_found} = Collections.add("curated", Ecto.UUID.generate())
   end
 
+  test "add refuses a deleted publication" do
+    pub = publication("Deleted")
+    {:ok, _} = Documents.delete_public_document(pub.id)
+    assert {:error, :not_found} = Collections.add("curated", pub.id)
+  end
+
   test "replace_content on a publication emits an upsert in each of its collections" do
     pub = publication("v1")
     Repo.insert!(%Collection{name: "packs", access: "public"})
