@@ -7,7 +7,7 @@ defmodule ReplicantServer.Documents.ChangeEvent do
   @primary_key {:sequence, :id, autogenerate: true}
   @foreign_key_type :binary_id
 
-  schema "change_events" do
+  schema "change_events_v1" do
     field :event_type, :string
     field :forward_patch, JsonValue
     field :reverse_patch, JsonValue

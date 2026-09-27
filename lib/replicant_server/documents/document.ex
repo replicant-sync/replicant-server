@@ -15,6 +15,12 @@ defmodule ReplicantServer.Documents.Document do
     field :provenance, :map, default: %{}
     field :size_bytes, :integer
     field :deleted_at, :utc_datetime_usec
+    field :seq, :integer, default: 0
+    field :read_only, :boolean, default: false
+    field :author_id, :binary_id
+    field :source_doc_id, :binary_id
+    field :source_revision, :integer
+    field :derived_from, :binary_id
 
     belongs_to :user, ReplicantServer.Accounts.User
 
@@ -34,7 +40,13 @@ defmodule ReplicantServer.Documents.Document do
       :visibility,
       :provenance,
       :size_bytes,
-      :deleted_at
+      :deleted_at,
+      :seq,
+      :read_only,
+      :author_id,
+      :source_doc_id,
+      :source_revision,
+      :derived_from
     ])
     |> validate_required([:id, :content])
     |> validate_inclusion(:visibility, ["private", "public"])
