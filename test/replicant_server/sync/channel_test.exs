@@ -159,4 +159,42 @@ defmodule ReplicantServer.Sync.ChannelTest do
       assert_push "change", %{scope: "own", kind: "upsert"}
     end
   end
+
+  describe "upload" do
+    test "the uploader gets the reply and its own change as a push", %{ctx: ctx} do
+      client_id = Ecto.UUID.generate()
+      {:ok, _, socket} = join_sync(ctx, client_id: client_id)
+
+      ref =
+        Phoenix.ChannelTest.push(socket, "get_changes_since", %{
+          "scope" => "own",
+          "cursor" => 0,
+          "limit" => 500
+        })
+
+      assert_reply ref, :ok, _
+
+      doc_id = Ecto.UUID.generate()
+      upload_id = Ecto.UUID.generate()
+
+      ref =
+        Phoenix.ChannelTest.push(socket, "upload", %{
+          "upload_id" => upload_id,
+          "doc_id" => doc_id,
+          "kind" => "create",
+          "payload" => %{"title" => "Mine"}
+        })
+
+      assert_reply ref, :ok, %{doc_id: ^doc_id, seq: seq}
+
+      assert_push "change", %{
+        scope: "own",
+        kind: "upsert",
+        seq: ^seq,
+        doc_id: ^doc_id,
+        upload_id: ^upload_id,
+        client_id: ^client_id
+      }
+    end
+  end
 end

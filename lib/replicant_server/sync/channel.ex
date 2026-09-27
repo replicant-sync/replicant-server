@@ -4,7 +4,7 @@ defmodule ReplicantServer.Sync.Channel do
   use Phoenix.Channel
 
   alias ReplicantServer.{Auth, Feed, Scopes}
-  alias ReplicantServer.Sync.{Envelope, Protocol}
+  alias ReplicantServer.Sync.{Envelope, Protocol, Upload}
 
   require Logger
 
@@ -30,6 +30,10 @@ defmodule ReplicantServer.Sync.Channel do
 
   def handle_in("get_snapshot", params, socket) do
     with_scope(params, socket, &Protocol.snapshot(&1, &2, params))
+  end
+
+  def handle_in("upload", params, socket) do
+    {:reply, Upload.run(socket.assigns.user_id, socket.assigns.client_id, params), socket}
   end
 
   def handle_in(_event, _params, socket) do
