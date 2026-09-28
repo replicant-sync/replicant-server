@@ -17,9 +17,9 @@ defmodule ReplicantServer.Sync.Channel do
         {:ok, %{user_id: user_id, protocol_version: @protocol_version},
          assign(socket, user_id: user_id, scopes: MapSet.new())}
 
-      {:error, code} ->
+      {:error, code, extra} ->
         Logger.warning("Join rejected: #{code}")
-        {:error, Envelope.error(code)}
+        {:error, Envelope.error(code, extra)}
     end
   end
 
@@ -99,12 +99,19 @@ defmodule ReplicantServer.Sync.Channel do
        when is_binary(email) and is_binary(api_key) and is_binary(signature) and
               is_integer(timestamp) do
     case Auth.verify_hmac(api_key, signature, timestamp, email) do
-      {:ok, %{user_id: nil}} -> {:error, "auth_invalid"}
-      {:ok, %{user_id: user_id}} -> {:ok, user_id}
-      {:error, :timestamp_expired} -> {:error, "clock_skew"}
-      {:error, _reason} -> {:error, "auth_invalid"}
+      {:ok, %{user_id: nil}} ->
+        {:error, "auth_invalid", %{}}
+
+      {:ok, %{user_id: user_id}} ->
+        {:ok, user_id}
+
+      {:error, :timestamp_expired} ->
+        {:error, "clock_skew", %{server_time: System.system_time(:second)}}
+
+      {:error, _reason} ->
+        {:error, "auth_invalid", %{}}
     end
   end
 
-  defp authenticate(_params), do: {:error, "auth_invalid"}
+  defp authenticate(_params), do: {:error, "auth_invalid", %{}}
 end

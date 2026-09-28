@@ -12,6 +12,7 @@ Sync protocol v2 (DEV-1151). Hard cut: v1 clients are refused at socket connect.
 - `get_document`; a deleted document replies `deleted` with `current_seq`.
 - Publications (read-only, changed only by `publish`, `publish_update`, `unpublish`) and collections. `collection:curated` is replicated to every user.
 - 90-day retention of change events and stored upload replies; older cursors get `cursor_too_old`.
+- Join replies `clock_skew` (`is_fatal: false`, with `server_time` in unix seconds) when the HMAC timestamp is outside the 5-minute window. Every other join auth failure stays `auth_invalid` (fatal).
 
 ### Changed
 
@@ -26,7 +27,7 @@ Sync protocol v2 (DEV-1151). Hard cut: v1 clients are refused at socket connect.
 
 ### Protocol summary
 
-Protocol version is checked at socket connect (wrong or missing version → HTTP 426, `update_required`). HMAC auth happens at the `sync:v2` join. Change events and stored upload replies retain for 90 days; a cursor older than the `trim_watermark`, or past the feed head, gets `cursor_too_old`.
+Protocol version is checked at socket connect (wrong or missing version → HTTP 426, `update_required`). HMAC auth happens at the `sync:v2` join. Fatal error codes are `update_required`, `auth_invalid` and `account_disabled`; all others, including `clock_skew`, are transient. Change events and stored upload replies retain for 90 days; a cursor older than the `trim_watermark`, or past the feed head, gets `cursor_too_old`.
 
 ### Host (entonal-web-app) follow-ups
 

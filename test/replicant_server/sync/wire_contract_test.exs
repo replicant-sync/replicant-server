@@ -128,6 +128,14 @@ defmodule ReplicantServer.Sync.WireContractTest do
     assert {:error, join_error} = join_result
     assert %{code: "auth_invalid", is_fatal: true} = join_error
 
+    # Join error: timestamp outside the HMAC window.
+    skewed_params = auth_params(ctx, System.system_time(:second) - 600)
+
+    {skew_result, _log} = with_log(fn -> join_sync(ctx, params: skewed_params) end)
+    assert {:error, clock_skew} = skew_result
+    assert %{code: "clock_skew", is_fatal: false, server_time: server_time} = clock_skew
+    assert is_integer(server_time)
+
     # `exists`: re-creating a doc_id that already exists (even once deleted).
     ref =
       Phoenix.ChannelTest.push(socket, "upload", %{
@@ -241,6 +249,7 @@ defmodule ReplicantServer.Sync.WireContractTest do
       %{
         "join_reply" => join_reply_frame(:ok, join_reply),
         "join_error_reply" => join_reply_frame(:error, join_error),
+        "clock_skew_join_reply" => join_reply_frame(:error, clock_skew),
         "changes_reply" => reply_frame(:ok, changes),
         "changes_reply_populated" => reply_frame(:ok, populated_changes),
         "upload_reply" => reply_frame(:ok, uploaded),
@@ -371,7 +380,8 @@ defmodule ReplicantServer.Sync.WireContractTest do
   defp walk(key, value, _ranks) when key in @secret_hex_keys and is_binary(value),
     do: String.replace(value, ~r/[0-9a-f]{64}\z/, String.duplicate("0", 64))
 
-  defp walk("timestamp", value, _ranks) when is_integer(value), do: 1_767_225_600
+  defp walk(key, value, _ranks) when key in ~w(timestamp server_time) and is_integer(value),
+    do: 1_767_225_600
 
   defp walk(_key, value, ranks), do: walk(value, ranks)
 end

@@ -68,6 +68,15 @@ defmodule ReplicantServer.Sync.ChannelTest do
 
     test "an expired timestamp gets transient clock_skew", %{ctx: ctx} do
       params = auth_params(ctx, System.system_time(:second) - 600)
+
+      assert {:error, %{code: "clock_skew", is_fatal: false, server_time: server_time}} =
+               join_sync(ctx, params: params)
+
+      assert abs(server_time - System.system_time(:second)) <= 5
+    end
+
+    test "an expired timestamp with a bad signature still gets clock_skew", %{ctx: ctx} do
+      params = %{auth_params(ctx, System.system_time(:second) - 600) | "signature" => "bad"}
       assert {:error, %{code: "clock_skew", is_fatal: false}} = join_sync(ctx, params: params)
     end
 
