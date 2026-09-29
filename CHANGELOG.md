@@ -18,6 +18,7 @@ Sync protocol v2 (DEV-1151). Hard cut: v1 clients are refused at socket connect.
 
 - Creating a document never deduplicates by content hash.
 - The sender now receives its own changes.
+- A `get_changes_since` page reads its feed events and documents in one transaction, so `next_cursor` matches the document state in the page.
 - Canonical hashing escapes control characters as lowercase `\u00xx` (serde_json). Shared fixture: `test/fixtures/content_hash_fixture.json`.
 - `create_public_document` creates an authorless publication in curated; `delete_public_document` unpublishes it. `create_document/2`, `update_document/4` and `delete_document/2` no longer take options.
 

@@ -14,17 +14,17 @@ defmodule ReplicantServer.Sync.Protocol do
 
   def changes_since(scope_key, wire_scope, %{"cursor" => cursor} = params)
       when is_integer(cursor) and cursor >= 0 and cursor <= @max_bigint do
-    case Feed.changes_since(scope_key, cursor, page_limit(params["limit"])) do
-      {:ok, page} ->
-        docs = load_docs(for e <- page.events, e.kind == "upsert", do: e.doc_id)
-        kept = for e <- page.events, e.kind != "upsert" or live?(docs[e.doc_id]), do: e
-        replies = load_upload_replies(for e <- kept, superseded_upload?(e, docs), do: e)
-
-        changes =
-          for event <- kept,
-              do: Envelope.change(event, doc_as_of(event, docs, replies), wire_scope)
-
-        {:ok, %{changes: changes, next_cursor: page.next_cursor, has_more: page.has_more}}
+    # One transaction keeps the scope lock taken by Feed.head/1 while documents load, so no
+    # write to this scope can commit between the feed read and the document read.
+    Repo.transaction(fn ->
+      case Feed.changes_since(scope_key, cursor, page_limit(params["limit"])) do
+        {:ok, page} -> changes_page(page, wire_scope)
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, reply} ->
+        {:ok, reply}
 
       {:error, :cursor_too_old} ->
         {:error, Envelope.error("cursor_too_old", %{scope: wire_scope})}
@@ -33,6 +33,17 @@ defmodule ReplicantServer.Sync.Protocol do
 
   def changes_since(_scope_key, wire_scope, _params) do
     {:error, Envelope.error("validation", %{scope: wire_scope})}
+  end
+
+  defp changes_page(page, wire_scope) do
+    docs = load_docs(for e <- page.events, e.kind == "upsert", do: e.doc_id)
+    kept = for e <- page.events, e.kind != "upsert" or live?(docs[e.doc_id]), do: e
+    replies = load_upload_replies(for e <- kept, superseded_upload?(e, docs), do: e)
+
+    changes =
+      for event <- kept, do: Envelope.change(event, doc_as_of(event, docs, replies), wire_scope)
+
+    %{changes: changes, next_cursor: page.next_cursor, has_more: page.has_more}
   end
 
   defp page_limit(limit) when is_integer(limit) and limit > 0, do: min(limit, @max_page)

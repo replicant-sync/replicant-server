@@ -149,4 +149,94 @@ defmodule ReplicantServer.Sync.ProtocolChangesTest do
     assert {:ok, %{changes: [first, _second]}} = page(own, 0)
     assert %{upload_id: ^upload_id, doc: %{content: %{"title" => "web edit"}}} = first
   end
+
+  describe "page consistency (real transactions)" do
+    alias Ecto.Adapters.SQL.Sandbox
+    alias ReplicantServer.Accounts.User
+    alias ReplicantServer.Feed.ChangeEvent
+
+    setup do
+      {user, doc} =
+        Sandbox.unboxed_run(Repo, fn ->
+          {:ok, user} =
+            Accounts.get_or_create_user("consistency-#{Ecto.UUID.generate()}@example.com")
+
+          {:ok, doc} = create(user, "kept")
+          {user, doc}
+        end)
+
+      own = Scopes.own(user.id)
+
+      on_exit(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          Repo.delete_all(from e in ChangeEvent, where: e.scope == ^own)
+          Repo.delete_all(from d in Document, where: d.user_id == ^user.id)
+          Repo.delete_all(from u in User, where: u.id == ^user.id)
+        end)
+      end)
+
+      %{user: user, doc: doc, own: own}
+    end
+
+    # At the reader's first commit, a concurrent delete runs to completion unless the
+    # reader still holds the scope lock; with one read transaction that commit is the last.
+    defp delete_at_first_commit(reader, user, doc, test_pid) do
+      handler = "delete-at-first-commit-#{inspect(reader)}"
+
+      :telemetry.attach(
+        handler,
+        [:replicant_server, :repo, :query],
+        fn _event, _measurements, %{query: query}, _config ->
+          if self() == reader and query == "commit" and !Process.get(:delete_fired) do
+            Process.put(:delete_fired, true)
+
+            spawn(fn ->
+              {:ok, deleted} =
+                Sandbox.unboxed_run(Repo, fn -> Documents.delete_document(user.id, doc.id) end)
+
+              send(reader, {:deleted, deleted.seq})
+              send(test_pid, {:deleted, deleted.seq})
+            end)
+
+            receive do
+              {:deleted, _seq} -> :ok
+            after
+              500 -> :ok
+            end
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler) end)
+    end
+
+    test "next_cursor matches the state the page's documents were read at", %{
+      user: user,
+      doc: doc,
+      own: own
+    } do
+      test_pid = self()
+
+      reader =
+        Task.async(fn ->
+          receive do
+            :go -> :ok
+          end
+
+          Sandbox.unboxed_run(Repo, fn -> page(own, 0) end)
+        end)
+
+      delete_at_first_commit(reader.pid, user, doc, test_pid)
+      send(reader.pid, :go)
+
+      assert {:ok, %{changes: changes, next_cursor: next_cursor, has_more: false}} =
+               Task.await(reader)
+
+      assert_receive {:deleted, delete_seq}, 5_000
+      assert next_cursor >= doc.seq and next_cursor < delete_seq
+      assert [%{kind: "upsert", doc_id: doc_id, doc: %{seq: doc_seq}}] = changes
+      assert {doc_id, doc_seq} == {doc.id, doc.seq}
+    end
+  end
 end
