@@ -65,7 +65,7 @@ defmodule ReplicantServer.Documents do
 
   @doc "Soft-deletes a source document the user owns; the row stays as a tombstone."
   def delete_document(user_id, document_id) do
-    run_write(fn -> do_delete(user_id, document_id, %{}) end)
+    run_write(fn -> do_delete(user_id, document_id, nil, %{}) end)
     |> tap_ok(fn doc ->
       broadcast("documents:#{doc.id}", {:document_deleted, doc})
       broadcast("documents:user:#{user_id}", {:document_deleted, doc})
@@ -181,8 +181,13 @@ defmodule ReplicantServer.Documents do
   end
 
   @doc false
-  def do_delete(user_id, document_id, meta) do
-    with {:ok, doc} <- lock_writable(user_id, document_id), do: soft_delete(doc, meta)
+  def do_delete(user_id, document_id, base_hash, meta) do
+    with {:ok, doc} <- lock_writable(user_id, document_id) do
+      # A delete made on an older version must not destroy the newer one.
+      if base_hash && doc.content_hash != base_hash,
+        do: {:error, :hash_mismatch, doc},
+        else: soft_delete(doc, meta)
+    end
   end
 
   @doc false

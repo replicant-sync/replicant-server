@@ -242,6 +242,29 @@ defmodule ReplicantServer.Sync.UploadTest do
       {:ok, again} = Upload.run(user.id, @client_id, p)
       assert json(again) == json(first)
     end
+
+    test "a delete on a stale base gets hash_mismatch and deletes nothing", %{user: user} do
+      doc = create(user)
+
+      assert {:error, %{code: "hash_mismatch", is_fatal: false, current_hash: h, current_seq: s}} =
+               upload(user, "delete", doc.doc_id, %{"base_hash" => "stale"})
+
+      assert {h, s} == {doc.hash, doc.seq}
+      refute Repo.get(Document, doc.doc_id).deleted_at
+      assert length(events(doc.doc_id)) == 1
+    end
+
+    test "a delete on the current base soft-deletes; its retry returns the stored success", %{
+      user: user
+    } do
+      doc = create(user)
+      p = params("delete", doc.doc_id, %{"base_hash" => doc.hash})
+      assert {:ok, first} = Upload.run(user.id, @client_id, p)
+      assert Repo.get(Document, doc.doc_id).deleted_at
+      assert {:ok, again} = Upload.run(user.id, @client_id, p)
+      assert json(again) == json(first)
+      assert length(events(doc.doc_id)) == 2
+    end
   end
 
   describe "validation" do
@@ -253,6 +276,9 @@ defmodule ReplicantServer.Sync.UploadTest do
                upload(user, "create", "not-a-uuid", %{"payload" => %{}})
 
       assert {:error, %{code: "validation"}} = upload(user, "rename", Ecto.UUID.generate())
+
+      assert {:error, %{code: "validation"}} =
+               upload(user, "delete", Ecto.UUID.generate(), %{"base_hash" => 5})
 
       assert {:error, %{code: "validation"}} =
                upload(user, "create", Ecto.UUID.generate(), %{"payload" => [1]})

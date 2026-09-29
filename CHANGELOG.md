@@ -9,6 +9,7 @@ Sync protocol v2 (DEV-1151). Hard cut: v1 clients are refused at socket connect.
 - `sync:v2` channel; the protocol version is checked at socket connect (`update_required`).
 - Per-scope change feed: `get_changes_since`, `get_snapshot`, `change` pushes with `seq`/`prev_seq`. Scopes are `own` and `collection:<name>`.
 - `upload` (create/update/delete), deduplicated on `(upload_id, base_hash)`.
+- `upload` delete takes an optional `base_hash`, the version the delete was made on. When it is not the stored `content_hash` the reply is `hash_mismatch` (with `current_hash` and `current_seq`) and nothing is deleted. Without it the delete is unconditional.
 - `get_document`; a deleted document replies `deleted` with `current_seq`.
 - Publications (read-only, changed only by `publish`, `publish_update`, `unpublish`) and collections. `collection:curated` is replicated to every user.
 - 90-day retention of change events and stored upload replies; older cursors get `cursor_too_old`.

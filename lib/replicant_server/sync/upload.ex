@@ -59,7 +59,7 @@ defmodule ReplicantServer.Sync.Upload do
       case req.kind do
         "create" -> Documents.do_create(user_id, %{id: req.doc_id, content: req.payload}, meta)
         "update" -> Documents.do_update(user_id, req.doc_id, req.payload, req.base_hash, meta)
-        "delete" -> Documents.do_delete(user_id, req.doc_id, meta)
+        "delete" -> Documents.do_delete(user_id, req.doc_id, req.base_hash, meta)
       end
 
     case result do
@@ -97,7 +97,7 @@ defmodule ReplicantServer.Sync.Upload do
     with {:ok, upload_id} <- Ecto.UUID.cast(upload_id),
          {:ok, doc_id} <- Ecto.UUID.cast(doc_id),
          :ok <- check_payload(kind, params["payload"], params["base_hash"]) do
-      base_hash = if kind == "update", do: params["base_hash"]
+      base_hash = if kind in ~w(update delete), do: params["base_hash"]
 
       {:ok,
        %{
@@ -121,7 +121,7 @@ defmodule ReplicantServer.Sync.Upload do
   defp check_payload("update", patch, base) when is_list(patch) and is_binary(base),
     do: check_size(patch)
 
-  defp check_payload("delete", _payload, _base), do: :ok
+  defp check_payload("delete", _payload, base) when is_nil(base) or is_binary(base), do: :ok
   defp check_payload(_kind, _payload, _base), do: {:error, :validation}
 
   defp check_size(payload) do
