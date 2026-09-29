@@ -26,14 +26,14 @@ Always use the `json_diff/2` helper in `Documents` which wraps `Jsonpatch.diff` 
 ## Library / Web Boundary
 
 The web app lives in its own repository and consumes this library through public
-context APIs (Documents, Accounts, Auth, OT) and the sync transport
+context APIs (Documents, Publications, Collections, Accounts, Auth) and the sync transport
 (`ReplicantServer.Sync.Channel`/`Socket`). No module here may reference
 `ReplicantServerWeb` — enforced by `test/replicant_server/boundary_test.exs`.
 
-## Channel Topics
+## Sync protocol (v2)
 
-- `sync:user:{user_id}` — per-user document sync (private docs)
-- `sync:public` — public document sync
-- `documents:*` — Phoenix PubSub topics for host-app UIs (separate from channel topics)
-
-`broadcast_from!` (in `ReplicantServer.Sync.Channel`) excludes the sender socket. `Documents` broadcasts via `Phoenix.PubSub` (`%Phoenix.Socket.Broadcast{}` structs on `sync:*` topics) and reaches all channel subscribers. Both are needed: the sync channel handles client-initiated changes, the Documents context handles host-app changes.
+- Socket params: `protocol_version` (required; missing = v1 client, refused), `client_id`.
+- One channel per connection: topic `sync:v2`, joined with the HMAC params. Events: `get_changes_since`, `get_snapshot`, `upload`, `get_document`, `publish`, `publish_update`, `unpublish`; server push `change`.
+- Every replicated write follows the recipe in `ReplicantServer.Feed`: lock the document row, `Feed.record/2` (scope advisory locks, then `nextval`), commit, `Feed.broadcast/2`. Use `Documents.run_write/1`.
+- Scopes: `own:<user_id>` (wire `own`) and `collection:<name>`. PubSub topics `feed:<scope>` carry `{:feed_change, event, doc}`.
+- `documents:*` PubSub topics remain for host-app UIs.

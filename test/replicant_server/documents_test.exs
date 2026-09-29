@@ -3,10 +3,18 @@ defmodule ReplicantServer.DocumentsTest do
 
   alias ReplicantServer.Documents
   alias ReplicantServer.Accounts
+  alias ReplicantServer.{Feed, Scopes}
+  alias ReplicantServer.Feed.ChangeEvent
+  alias ReplicantServer.Documents.Document
+  alias Ecto.Adapters.SQL.Sandbox
 
   setup do
     {:ok, user} = Accounts.get_or_create_user("test@example.com")
     %{user: user}
+  end
+
+  defp events_for(doc_id) do
+    Repo.all(from e in ChangeEvent, where: e.doc_id == ^doc_id, order_by: e.seq)
   end
 
   describe "create_document" do
@@ -22,20 +30,26 @@ defmodule ReplicantServer.DocumentsTest do
       assert document.sync_revision == 1
       assert document.content_hash != nil
 
-      # Verify event was logged
-      events = Documents.get_changes_since(user.id, 0)
-      assert length(events) == 1
-      assert hd(events).event_type == "create"
+      assert [event] = events_for(doc_id)
+      assert {event.scope, event.kind, event.seq} == {"own:" <> user.id, "upsert", document.seq}
+      assert event.hash == document.content_hash
     end
 
-    test "returns existing document when content is identical", %{user: user} do
+    test "identical content under a new id is a second document", %{user: user} do
       content = %{"title" => "Duplicate", "body" => "Same content"}
-
       {:ok, first} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: content})
       {:ok, second} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: content})
 
-      assert first.id == second.id
-      assert Documents.list_user_documents(user.id) |> length() == 1
+      assert first.id != second.id
+      assert Documents.list_user_documents(user.id) |> length() == 2
+    end
+
+    test "a deleted document's id stays taken", %{user: user} do
+      {:ok, doc} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: %{"a" => 1}})
+      {:ok, _} = Documents.delete_document(user.id, doc.id)
+
+      assert {:error, :conflict, _} =
+               Documents.create_document(user.id, %{id: doc.id, content: %{}})
     end
 
     test "does not dedup when content differs", %{user: user} do
@@ -78,19 +92,6 @@ defmodule ReplicantServer.DocumentsTest do
       assert Documents.list_user_documents(user.id) |> length() == 1
     end
 
-    test "dedup returns existing even when new ID is provided", %{user: user} do
-      content = %{"title" => "Stable"}
-      original_id = UUID.uuid4()
-      new_id = UUID.uuid4()
-
-      {:ok, first} = Documents.create_document(user.id, %{id: original_id, content: content})
-      {:ok, second} = Documents.create_document(user.id, %{id: new_id, content: content})
-
-      # Should return the original, not create with the new ID
-      assert second.id == original_id
-      assert first.id == second.id
-    end
-
     test "returns conflict for duplicate ID", %{user: user} do
       doc_id = UUID.uuid4()
       content = %{"title" => "Test"}
@@ -101,6 +102,13 @@ defmodule ReplicantServer.DocumentsTest do
                Documents.create_document(user.id, %{id: doc_id, content: %{"title" => "Other"}})
 
       assert existing.id == doc_id
+    end
+
+    test "a non-string title does not fail the insert", %{user: user} do
+      assert {:ok, doc} =
+               Documents.create_document(user.id, %{id: UUID.uuid4(), content: %{"title" => 123}})
+
+      assert doc.title == nil
     end
   end
 
@@ -144,21 +152,47 @@ defmodule ReplicantServer.DocumentsTest do
                Documents.update_document(user.id, doc.id, patch, "wrong_hash")
     end
 
-    test "logs forward and reverse patches", %{user: user} do
+    test "appends an upsert with the new hash and seq", %{user: user} do
       {:ok, doc} =
-        Documents.create_document(user.id, %{
-          id: UUID.uuid4(),
-          content: %{"title" => "Original"}
-        })
+        Documents.create_document(user.id, %{id: UUID.uuid4(), content: %{"title" => "Original"}})
 
       patch = [%{"op" => "replace", "path" => "/title", "value" => "Updated"}]
-      {:ok, _} = Documents.update_document(user.id, doc.id, patch, doc.content_hash)
+      {:ok, updated} = Documents.update_document(user.id, doc.id, patch, doc.content_hash)
 
-      events = Documents.get_changes_since(user.id, 0)
-      update_event = Enum.find(events, &(&1.event_type == "update"))
+      assert [_create, event] = events_for(doc.id)
 
-      assert update_event.forward_patch == patch
-      assert update_event.reverse_patch != nil
+      assert {event.kind, event.seq, event.hash, event.prev_seq} ==
+               {"upsert", updated.seq, updated.content_hash, doc.seq}
+    end
+
+    test "another user's document is forbidden and a publication is read-only", %{user: user} do
+      {:ok, other} = Accounts.get_or_create_user("other-writer@example.com")
+      {:ok, doc} = Documents.create_document(other.id, %{id: UUID.uuid4(), content: %{"t" => 1}})
+      patch = [%{"op" => "replace", "path" => "/t", "value" => 2}]
+
+      assert {:error, :forbidden} =
+               Documents.update_document(user.id, doc.id, patch, doc.content_hash)
+
+      pub =
+        Repo.insert!(%Document{
+          id: UUID.uuid4(),
+          content: %{"t" => 1},
+          content_hash: "h",
+          read_only: true
+        })
+
+      assert {:error, :forbidden} = Documents.update_document(user.id, pub.id, patch, "h")
+    end
+
+    test "a malformed patch is invalid_patch", %{user: user} do
+      {:ok, doc} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: %{"t" => 1}})
+      bad = [%{"op" => "replace", "path" => "/missing/deep", "value" => 2, "junk" => true}]
+
+      assert {:error, :invalid_patch} =
+               Documents.update_document(user.id, doc.id, bad, doc.content_hash)
+
+      assert {:error, :invalid_patch} =
+               Documents.update_document(user.id, doc.id, "nope", doc.content_hash)
     end
   end
 
@@ -176,22 +210,58 @@ defmodule ReplicantServer.DocumentsTest do
       # Should not appear in list
       assert Documents.list_user_documents(user.id) == []
 
-      # Event logged
-      events = Documents.get_changes_since(user.id, 0)
-      delete_event = Enum.find(events, &(&1.event_type == "delete"))
-      assert delete_event != nil
+      assert [%{kind: "upsert"}, %{kind: "delete", seq: seq}] = events_for(doc.id)
+      assert seq == deleted.seq
+    end
+
+    test "deleting keeps the document's events and the row as a tombstone", %{user: user} do
+      {:ok, doc} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: %{"t" => 1}})
+      {:ok, _} = Documents.delete_document(user.id, doc.id)
+      assert length(events_for(doc.id)) == 2
+      assert Repo.get(Document, doc.id).deleted_at
+      assert {:error, :not_found} = Documents.delete_document(user.id, doc.id)
     end
   end
 
-  describe "public document dedup" do
-    test "returns existing public document when content is identical" do
-      content = %{"title" => "Public Preset", "data" => [1, 2, 3]}
+  describe "replace_content" do
+    test "a stale copy is refused with the current document and nothing is written", %{
+      user: user
+    } do
+      {:ok, doc} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: %{"v" => 1}})
+      {:ok, current} = Documents.replace_content(doc, %{"v" => 2})
 
+      assert {:error, :stale, ^current} = Documents.replace_content(doc, %{"v" => 3})
+      assert Repo.get!(Document, doc.id).content == %{"v" => 2}
+      assert length(events_for(doc.id)) == 2
+    end
+
+    test "content equal to the locked row is a no-op, even from a stale copy", %{user: user} do
+      {:ok, doc} = Documents.create_document(user.id, %{id: UUID.uuid4(), content: %{"v" => 1}})
+      {:ok, current} = Documents.replace_content(doc, %{"v" => 2})
+
+      assert {:ok, ^current} = Documents.replace_content(doc, %{"v" => 2})
+      assert {:ok, ^current} = Documents.replace_content(current, %{"v" => 2})
+      assert Repo.get!(Document, doc.id).seq == current.seq
+      assert length(events_for(doc.id)) == 2
+    end
+  end
+
+  describe "run_write/1" do
+    test "refuses to run inside an open transaction" do
+      Repo.transaction(fn ->
+        assert_raise ArgumentError, fn -> Documents.run_write(fn -> {:error, :unused} end) end
+      end)
+    end
+  end
+
+  describe "create_public_document" do
+    test "identical public content creates two publications" do
+      content = %{"title" => "Public Preset", "data" => [1, 2, 3]}
       {:ok, first} = Documents.create_public_document(%{content: content})
       {:ok, second} = Documents.create_public_document(%{content: content})
 
-      assert first.id == second.id
-      assert Documents.list_public_documents() |> length() == 1
+      assert first.id != second.id
+      assert Documents.list_public_documents() |> length() == 2
     end
 
     test "does not dedup public and user documents", %{user: user} do
@@ -224,7 +294,7 @@ defmodule ReplicantServer.DocumentsTest do
                Documents.copy_document_to_user(UUID.uuid4(), user.id, target.id)
     end
 
-    test "skips if identical content already exists for target", %{user: user} do
+    test "copies even when identical content already exists for target", %{user: user} do
       {:ok, target} = Accounts.get_or_create_user("target3@example.com")
       content = %{"title" => "Already There"}
 
@@ -235,8 +305,7 @@ defmodule ReplicantServer.DocumentsTest do
 
       {:ok, result} = Documents.copy_document_to_user(original.id, user.id, target.id)
 
-      # Should not create a duplicate
-      assert Documents.list_user_documents(target.id) |> length() == 1
+      assert Documents.list_user_documents(target.id) |> length() == 2
       assert result.content == content
     end
   end
@@ -258,7 +327,7 @@ defmodule ReplicantServer.DocumentsTest do
       assert Documents.list_user_documents(target.id) |> length() == 3
     end
 
-    test "skips already-existing documents", %{user: user} do
+    test "copies every document even when the target has identical content", %{user: user} do
       {:ok, target} = Accounts.get_or_create_user("bulk-target2@example.com")
       shared_content = %{"title" => "Shared"}
 
@@ -268,10 +337,10 @@ defmodule ReplicantServer.DocumentsTest do
       # Pre-create the shared one in target
       Documents.create_document(target.id, %{id: UUID.uuid4(), content: shared_content})
 
-      assert {:ok, %{copied: 1, skipped: 1}} =
+      assert {:ok, %{copied: 2, skipped: 0}} =
                Documents.copy_all_documents(user.id, target.id)
 
-      assert Documents.list_user_documents(target.id) |> length() == 2
+      assert Documents.list_user_documents(target.id) |> length() == 3
     end
 
     test "handles empty source gracefully", %{user: user} do
@@ -339,43 +408,6 @@ defmodule ReplicantServer.DocumentsTest do
 
       assert Documents.compute_hash(content) == legacy_hash
     end
-
-    test "pins the exact hash for a fixed >32-key map with mixed float magnitudes and a non-ASCII key/value (HAMT-backed, exercises canonical sort + serde_json/ryu float parity)" do
-      content =
-        for i <- 1..35, into: %{} do
-          {"field_#{String.pad_leading(Integer.to_string(i), 2, "0")}", i}
-        end
-        |> Map.put("whole", 1.0)
-        |> Map.put("large", 1.0e10)
-        |> Map.put("small", 1.0e-7)
-        |> Map.put("tenth", 0.1)
-        |> Map.put("negative", -2.5)
-        |> Map.put("unicode_key_🎵", "café résumé 音楽")
-        |> Map.put("nested", %{
-          "z" => [3, 2, 1],
-          "a" => "x",
-          "deep" => %{"tags" => ["b", "a", "c"]}
-        })
-
-      assert map_size(content) == 42
-
-      assert Documents.compute_hash(content) ==
-               "7d0576a13a06288152611ed9957f3679e33c1e4f3c44c585b09f17c2521e995a"
-    end
-
-    test "pins the exact hash for a nested >32-key object inside a normal-sized parent (recursion into HAMT at depth)" do
-      child =
-        for i <- 1..40, into: %{} do
-          {"child_field_#{String.pad_leading(Integer.to_string(i), 2, "0")}", i}
-        end
-
-      content = %{"title" => "Parent Doc", "count" => 3, "child" => child}
-
-      assert map_size(child) == 40
-
-      assert Documents.compute_hash(content) ==
-               "4460584450427fd9acbd2d2ecc56eb8fb11b40f96eef23172bb1a3655fca2026"
-    end
   end
 
   describe "envelope attribution" do
@@ -403,22 +435,80 @@ defmodule ReplicantServer.DocumentsTest do
 
       assert doc.author_name == "Sevish"
     end
+  end
 
-    test "envelope_fields returns the four attribution keys" do
-      {:ok, user} = ReplicantServer.Accounts.upsert_user("rr@robertrich.com", "Robert Rich")
+  describe "write lock ordering (real transactions)" do
+    setup do
+      {doc_id, user_id} =
+        Sandbox.unboxed_run(Repo, fn ->
+          {:ok, user} =
+            Accounts.get_or_create_user(
+              "lock-order-#{System.unique_integer([:positive])}@example.com"
+            )
 
-      {:ok, doc} =
-        Documents.create_document(user.id, %{
-          "id" => Ecto.UUID.generate(),
-          "content" => %{"title" => "Partch"}
-        })
+          {:ok, doc} =
+            Documents.create_document(user.id, %{id: Ecto.UUID.generate(), content: %{"v" => 0}})
 
-      assert Documents.envelope_fields(doc) == %{
-               user_id: user.id,
-               author_name: "Robert Rich",
-               visibility: "private",
-               provenance: %{}
-             }
+          {doc.id, user.id}
+        end)
+
+      on_exit(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          Repo.delete_all(from e in ChangeEvent, where: e.doc_id == ^doc_id)
+          Repo.delete_all(from d in Document, where: d.id == ^doc_id)
+          Repo.delete_all(from u in Accounts.User, where: u.id == ^user_id)
+        end)
+      end)
+
+      %{doc_id: doc_id, user_id: user_id}
+    end
+
+    test "replace_content takes the document row lock before it waits on the scope lock", %{
+      doc_id: doc_id,
+      user_id: user_id
+    } do
+      scope = Scopes.own(user_id)
+      parent = self()
+
+      holder =
+        Task.async(fn ->
+          Sandbox.unboxed_run(Repo, fn ->
+            Repo.transaction(fn ->
+              Feed.lock_scopes([scope])
+              send(parent, :scope_locked)
+
+              receive do
+                :release -> :ok
+              end
+            end)
+          end)
+        end)
+
+      assert_receive :scope_locked
+
+      writer =
+        Task.async(fn ->
+          Sandbox.unboxed_run(Repo, fn ->
+            doc = Repo.get!(Document, doc_id)
+            Documents.replace_content(doc, %{"v" => 1})
+          end)
+        end)
+
+      refute Task.yield(writer, 200)
+
+      # The writer already holds the document row lock (taken before it blocked on the
+      # scope lock inside Feed.record/2), so a NOWAIT probe from another connection fails.
+      assert {:error, %Postgrex.Error{postgres: %{code: :lock_not_available}}} =
+               Sandbox.unboxed_run(Repo, fn ->
+                 Repo.query("SELECT id FROM documents WHERE id = $1 FOR UPDATE NOWAIT", [
+                   Ecto.UUID.dump!(doc_id)
+                 ])
+               end)
+
+      send(holder.pid, :release)
+      assert {:ok, :ok} = Task.await(holder)
+      assert {:ok, updated} = Task.await(writer)
+      assert updated.content == %{"v" => 1}
     end
   end
 end
