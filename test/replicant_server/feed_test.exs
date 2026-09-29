@@ -154,6 +154,44 @@ defmodule ReplicantServer.FeedTest do
       assert next >= seq
     end
 
+    defp hold_read(scope, parent) do
+      Task.async(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          Repo.transaction(fn ->
+            Feed.head(scope)
+            send(parent, :reading)
+
+            receive do
+              :release -> :ok
+            end
+          end)
+        end)
+      end)
+    end
+
+    test "concurrent reads do not block each other, but a writer waits for an open read",
+         %{scope: s} do
+      holder = hold_read(s, self())
+      assert_receive :reading
+
+      reader =
+        Task.async(fn -> Sandbox.unboxed_run(Repo, fn -> Feed.changes_since(s, 0, 500) end) end)
+
+      assert {:ok, {:ok, %{events: []}}} = Task.yield(reader, 2_000)
+
+      writer =
+        Task.async(fn ->
+          Sandbox.unboxed_run(Repo, fn ->
+            Repo.transaction(fn -> Feed.record([s], change()) end)
+          end)
+        end)
+
+      refute Task.yield(writer, 200)
+      send(holder.pid, :release)
+      Task.await(holder)
+      assert {:ok, {_seq, [_event]}} = Task.await(writer)
+    end
+
     defp hold_lock(scope, parent) do
       Task.async(fn ->
         Sandbox.unboxed_run(Repo, fn ->

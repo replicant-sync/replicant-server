@@ -6,7 +6,8 @@ defmodule ReplicantServer.Feed do
   Write recipe, inside one `Repo.transaction`: lock the document row (if one
   exists), `record/2`, commit, then `broadcast/2`. `record/2` takes the scope
   advisory locks before `nextval`, so commits within a scope happen in `seq`
-  order and `head/1` never returns a value past an uncommitted change.
+  order and `head/1` never returns a value past an uncommitted change. `head/1`
+  takes the same lock in shared mode, so concurrent reads do not block each other.
   """
 
   import Ecto.Query
@@ -58,8 +59,11 @@ defmodule ReplicantServer.Feed do
     {seq, events}
   end
 
+  # Readers take the scope lock shared: they wait for in-flight writers and block new
+  # ones until commit, but not each other.
   def head(scope) do
-    lock_scopes([scope])
+    require_transaction!()
+    Repo.query!("SELECT pg_advisory_xact_lock_shared(hashtext($1))", [scope])
 
     %{rows: [[value]]} =
       Repo.query!("SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM change_seq")
