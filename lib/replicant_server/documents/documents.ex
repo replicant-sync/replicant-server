@@ -248,7 +248,8 @@ defmodule ReplicantServer.Documents do
     end
   end
 
-  defp apply_patch(patch, content) when is_list(patch) do
+  @doc false
+  def apply_patch(patch, content) when is_list(patch) do
     case Jsonpatch.apply_patch(normalize_patch(patch), content) do
       {:ok, new_content} -> {:ok, new_content}
       {:error, _} -> {:error, :invalid_patch}
@@ -257,7 +258,7 @@ defmodule ReplicantServer.Documents do
     _ -> {:error, :invalid_patch}
   end
 
-  defp apply_patch(_patch, _content), do: {:error, :invalid_patch}
+  def apply_patch(_patch, _content), do: {:error, :invalid_patch}
 
   defp event_attrs(doc_id, kind, hash, meta) do
     %{
