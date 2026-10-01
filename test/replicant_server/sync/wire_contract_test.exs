@@ -70,10 +70,22 @@ defmodule ReplicantServer.Sync.WireContractTest do
     ref = Phoenix.ChannelTest.push(socket, "get_document", document_params)
     assert_reply ref, :ok, document
 
+    stale_delete_params = %{
+      "upload_id" => Ecto.UUID.generate(),
+      "doc_id" => doc_id,
+      "kind" => "delete",
+      "base_hash" => "stale",
+      "payload" => nil
+    }
+
+    ref = Phoenix.ChannelTest.push(socket, "upload", stale_delete_params)
+    assert_reply ref, :error, %{code: "hash_mismatch"}
+
     delete_params = %{
       "upload_id" => Ecto.UUID.generate(),
       "doc_id" => doc_id,
       "kind" => "delete",
+      "base_hash" => document.hash,
       "payload" => nil
     }
 

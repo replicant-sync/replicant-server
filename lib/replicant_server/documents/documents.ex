@@ -65,7 +65,7 @@ defmodule ReplicantServer.Documents do
 
   @doc "Soft-deletes a source document the user owns; the row stays as a tombstone."
   def delete_document(user_id, document_id) do
-    run_write(fn -> do_delete(user_id, document_id, %{}) end)
+    run_write(fn -> do_delete(user_id, document_id, nil, %{}) end)
     |> tap_ok(fn doc ->
       broadcast("documents:#{doc.id}", {:document_deleted, doc})
       broadcast("documents:user:#{user_id}", {:document_deleted, doc})
@@ -181,8 +181,13 @@ defmodule ReplicantServer.Documents do
   end
 
   @doc false
-  def do_delete(user_id, document_id, meta) do
-    with {:ok, doc} <- lock_writable(user_id, document_id), do: soft_delete(doc, meta)
+  def do_delete(user_id, document_id, base_hash, meta) do
+    with {:ok, doc} <- lock_writable(user_id, document_id) do
+      # A delete made on an older version must not destroy the newer one.
+      if base_hash && doc.content_hash != base_hash,
+        do: {:error, :hash_mismatch, doc},
+        else: soft_delete(doc, meta)
+    end
   end
 
   @doc false
@@ -243,7 +248,8 @@ defmodule ReplicantServer.Documents do
     end
   end
 
-  defp apply_patch(patch, content) when is_list(patch) do
+  @doc false
+  def apply_patch(patch, content) when is_list(patch) do
     case Jsonpatch.apply_patch(normalize_patch(patch), content) do
       {:ok, new_content} -> {:ok, new_content}
       {:error, _} -> {:error, :invalid_patch}
@@ -252,7 +258,7 @@ defmodule ReplicantServer.Documents do
     _ -> {:error, :invalid_patch}
   end
 
-  defp apply_patch(_patch, _content), do: {:error, :invalid_patch}
+  def apply_patch(_patch, _content), do: {:error, :invalid_patch}
 
   defp event_attrs(doc_id, kind, hash, meta) do
     %{
