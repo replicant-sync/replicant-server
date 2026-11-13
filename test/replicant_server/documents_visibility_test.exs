@@ -94,6 +94,41 @@ defmodule ReplicantServer.DocumentsVisibilityTest do
     assert ids == [a.id, b.id]
   end
 
+  describe "publication readers" do
+    test "list every live publication, in a public collection or not" do
+      {:ok, curated} = Documents.create_public_document(%{content: %{"title" => "Curated"}})
+      {user, unlisted} = user_publication("Unlisted")
+      {:ok, gone} = Documents.create_public_document(%{content: %{"title" => "Gone"}})
+      {:ok, _} = Documents.delete_public_document(gone.id)
+
+      {:ok, own} =
+        Documents.create_document(user.id, %{
+          id: Ecto.UUID.generate(),
+          content: %{"title" => "Own"}
+        })
+
+      ids = Documents.list_publications(search: "", sort_by: :title) |> Enum.map(& &1.id)
+      assert curated.id in ids
+      assert unlisted.id in ids
+      refute gone.id in ids
+      refute own.id in ids
+    end
+
+    test "get a live publication by id, and nothing else" do
+      {user, unlisted} = user_publication("Unlisted")
+
+      {:ok, own} =
+        Documents.create_document(user.id, %{
+          id: Ecto.UUID.generate(),
+          content: %{"title" => "Own"}
+        })
+
+      assert Documents.get_publication(unlisted.id).id == unlisted.id
+      refute Documents.get_publication(own.id)
+      refute Documents.get_publication("not-a-uuid")
+    end
+  end
+
   test "public readers skip an owned document marked public" do
     {:ok, user} = Accounts.upsert_user("rr@robertrich.com", "Robert Rich")
 

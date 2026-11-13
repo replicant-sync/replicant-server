@@ -6,6 +6,10 @@
 
 - `list_public_documents` and `get_public_document` return only live documents in a public collection (`Scopes.public_documents_query/0`), the same rule sync uses to serve publications. A publication in no public collection, or an owned document marked public, is no longer listed. `get_public_document` returns nil for an id that is not a UUID instead of raising.
 
+### Added
+
+- `list_publications/1` and `get_publication/1` read every live publication, whether or not a public collection holds it, so a host app's admins can still find and unpublish one the public readers no longer return.
+
 ## 0.5.0
 
 Sync protocol v2 (DEV-1151). Hard cut: v1 clients are refused at socket connect.
