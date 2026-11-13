@@ -517,32 +517,51 @@ defmodule ReplicantServer.Documents do
     end
   end
 
-  # --- Public documents (user_id IS NULL) ---
+  # --- Public documents (members of a public collection) ---
 
   @doc """
-  Lists all non-deleted public documents (user_id is nil) with optional sorting, search, and filters.
+  Lists the live documents in public collections (see
+  `Scopes.public_documents_query/0`) with optional sorting, search, and filters.
   """
-  def list_public_documents(opts \\ []) do
+  def list_public_documents(opts \\ []),
+    do: list_listed(Scopes.public_documents_query(), opts)
+
+  @doc """
+  Gets a live document in a public collection by ID; nil when `id` is not a UUID.
+  """
+  def get_public_document(id), do: get_listed(Scopes.public_documents_query(), id)
+
+  @doc """
+  Lists every live publication, whether or not a public collection holds it,
+  for admin moderation. Takes the options of `list_public_documents/1`.
+  """
+  def list_publications(opts \\ []), do: list_listed(publications_query(), opts)
+
+  @doc """
+  Gets a live publication by ID, in any collection or none; nil when `id` is
+  not a UUID.
+  """
+  def get_publication(id), do: get_listed(publications_query(), id)
+
+  defp publications_query,
+    do: from(d in Document, where: d.read_only and is_nil(d.deleted_at))
+
+  defp list_listed(query, opts) do
     sort_by = validate_field(opts[:sort_by], :updated_at)
     sort_order = validate_order(opts[:sort_order], :desc)
-    search = opts[:search]
-    filters = opts[:filters] || []
 
-    from(d in Document, where: d.visibility == "public" and is_nil(d.deleted_at))
-    |> maybe_search(search)
-    |> apply_json_filters(filters)
+    query
+    |> maybe_search(opts[:search])
+    |> apply_json_filters(opts[:filters] || [])
     |> order_by([d], [{^sort_order, ^sort_by}])
     |> Repo.all()
   end
 
-  @doc """
-  Gets a single public document by ID.
-  """
-  def get_public_document(id) do
-    Repo.one(
-      from d in Document,
-        where: d.id == ^id and d.visibility == "public" and is_nil(d.deleted_at)
-    )
+  defp get_listed(query, id) do
+    case Ecto.UUID.cast(id) do
+      {:ok, id} -> Repo.one(from d in query, where: d.id == ^id)
+      :error -> nil
+    end
   end
 
   @doc """
