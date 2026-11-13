@@ -6,28 +6,6 @@ defmodule ReplicantServer.DocumentsVisibilityTest do
   alias ReplicantServer.Documents.Document
   alias ReplicantServer.Repo
 
-  test "public readers return curated publications" do
-    {:ok, pub} = Documents.create_public_document(%{content: %{"title" => "Curated"}})
-
-    assert pub.id in (Documents.list_public_documents() |> Enum.map(& &1.id))
-    assert Documents.get_public_document(pub.id)
-  end
-
-  test "public readers skip a publication outside any public collection" do
-    {:ok, user} = Accounts.get_or_create_user("author@example.com")
-
-    {:ok, source} =
-      Documents.create_document(user.id, %{
-        id: Ecto.UUID.generate(),
-        content: %{"title" => "Draft"}
-      })
-
-    {:ok, pub} = Publications.publish(user.id, source.id)
-
-    refute pub.id in (Documents.list_public_documents() |> Enum.map(& &1.id))
-    refute Documents.get_public_document(pub.id)
-  end
-
   defp user_publication(title) do
     {:ok, user} = Accounts.get_or_create_user("author@example.com")
 
@@ -39,6 +17,20 @@ defmodule ReplicantServer.DocumentsVisibilityTest do
   end
 
   defp public_ids, do: Documents.list_public_documents() |> Enum.map(& &1.id)
+
+  test "public readers return curated publications" do
+    {:ok, pub} = Documents.create_public_document(%{content: %{"title" => "Curated"}})
+
+    assert pub.id in public_ids()
+    assert Documents.get_public_document(pub.id)
+  end
+
+  test "public readers skip a publication outside any public collection" do
+    {_user, pub} = user_publication("Draft")
+
+    refute pub.id in public_ids()
+    refute Documents.get_public_document(pub.id)
+  end
 
   test "public readers include a publication in any public collection, once" do
     {_user, pub} = user_publication("Packed")
@@ -107,7 +99,7 @@ defmodule ReplicantServer.DocumentsVisibilityTest do
           content: %{"title" => "Own"}
         })
 
-      ids = Documents.list_publications(search: "", sort_by: :title) |> Enum.map(& &1.id)
+      ids = Documents.list_publications() |> Enum.map(& &1.id)
       assert curated.id in ids
       assert unlisted.id in ids
       refute gone.id in ids
@@ -143,7 +135,7 @@ defmodule ReplicantServer.DocumentsVisibilityTest do
       })
       |> Repo.insert()
 
-    refute owned.id in (Documents.list_public_documents() |> Enum.map(& &1.id))
+    refute owned.id in public_ids()
     refute Documents.get_public_document(owned.id)
   end
 
