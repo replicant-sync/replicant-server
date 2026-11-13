@@ -146,7 +146,7 @@ defmodule ReplicantServer.Documents.DedupeTest do
     assert report.affected_count == 0
 
     assert Documents.get_public_document(pub1.id)
-    assert Documents.get_public_document(dup.id)
+    assert %Document{deleted_at: nil} = Repo.get(Document, dup.id)
   end
 
   test "an owned document marked public is excluded even though it has a user_id", %{user: user} do

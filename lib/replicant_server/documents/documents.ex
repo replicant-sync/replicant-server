@@ -5,6 +5,7 @@ defmodule ReplicantServer.Documents do
 
   import Ecto.Query
   alias ReplicantServer.{Feed, Publications, Repo, Scopes}
+  alias ReplicantServer.Collections
   alias ReplicantServer.Collections.CollectionMember
   alias ReplicantServer.Documents.Document
 
@@ -517,10 +518,11 @@ defmodule ReplicantServer.Documents do
     end
   end
 
-  # --- Public documents (user_id IS NULL) ---
+  # --- Public documents (members of collection:curated) ---
 
   @doc """
-  Lists all non-deleted public documents (user_id is nil) with optional sorting, search, and filters.
+  Lists the live documents in `collection:curated`, the set every user
+  replicates, with optional sorting, search, and filters.
   """
   def list_public_documents(opts \\ []) do
     sort_by = validate_field(opts[:sort_by], :updated_at)
@@ -528,7 +530,7 @@ defmodule ReplicantServer.Documents do
     search = opts[:search]
     filters = opts[:filters] || []
 
-    from(d in Document, where: d.visibility == "public" and is_nil(d.deleted_at))
+    curated_query()
     |> maybe_search(search)
     |> apply_json_filters(filters)
     |> order_by([d], [{^sort_order, ^sort_by}])
@@ -536,14 +538,11 @@ defmodule ReplicantServer.Documents do
   end
 
   @doc """
-  Gets a single public document by ID.
+  Gets a live document in `collection:curated` by ID.
   """
-  def get_public_document(id) do
-    Repo.one(
-      from d in Document,
-        where: d.id == ^id and d.visibility == "public" and is_nil(d.deleted_at)
-    )
-  end
+  def get_public_document(id), do: Repo.one(from d in curated_query(), where: d.id == ^id)
+
+  defp curated_query, do: Scopes.documents_query(Scopes.collection(Collections.curated()))
 
   @doc """
   Creates an authorless publication in `collection:curated` (the admin

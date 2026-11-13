@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `list_public_documents` and `get_public_document` return only live members of `collection:curated`, the set every user replicates. A user's publication outside any public collection, or an owned document marked public, is no longer listed.
+
 ## 0.5.0
 
 Sync protocol v2 (DEV-1151). Hard cut: v1 clients are refused at socket connect.
