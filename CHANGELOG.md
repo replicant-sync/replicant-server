@@ -4,7 +4,7 @@
 
 ### Changed
 
-- `list_public_documents` and `get_public_document` return only live members of `collection:curated`, the set every user replicates. A user's publication outside any public collection, or an owned document marked public, is no longer listed.
+- `list_public_documents` and `get_public_document` return only live documents in a public collection (`Scopes.public_documents_query/0`), the same rule sync uses to serve publications. A publication in no public collection, or an owned document marked public, is no longer listed. `get_public_document` returns nil for an id that is not a UUID instead of raising.
 
 ## 0.5.0
 

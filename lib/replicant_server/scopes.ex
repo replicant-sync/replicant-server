@@ -39,6 +39,21 @@ defmodule ReplicantServer.Scopes do
     )
   end
 
+  @doc """
+  Live documents in at least one public collection: the publications any user
+  may read, whatever their own collections.
+  """
+  def public_documents_query do
+    public_members =
+      from m in CollectionMember,
+        join: c in Collection,
+        on: c.id == m.collection_id,
+        where: c.access == "public",
+        select: m.document_id
+
+    from d in Document, where: d.id in subquery(public_members) and is_nil(d.deleted_at)
+  end
+
   def to_wire("own:" <> _user_id), do: "own"
   def to_wire(scope), do: scope
 

@@ -5,7 +5,6 @@ defmodule ReplicantServer.Documents do
 
   import Ecto.Query
   alias ReplicantServer.{Feed, Publications, Repo, Scopes}
-  alias ReplicantServer.Collections
   alias ReplicantServer.Collections.CollectionMember
   alias ReplicantServer.Documents.Document
 
@@ -518,11 +517,11 @@ defmodule ReplicantServer.Documents do
     end
   end
 
-  # --- Public documents (members of collection:curated) ---
+  # --- Public documents (members of a public collection) ---
 
   @doc """
-  Lists the live documents in `collection:curated`, the set every user
-  replicates, with optional sorting, search, and filters.
+  Lists the live documents in public collections (see
+  `Scopes.public_documents_query/0`) with optional sorting, search, and filters.
   """
   def list_public_documents(opts \\ []) do
     sort_by = validate_field(opts[:sort_by], :updated_at)
@@ -530,7 +529,7 @@ defmodule ReplicantServer.Documents do
     search = opts[:search]
     filters = opts[:filters] || []
 
-    curated_query()
+    Scopes.public_documents_query()
     |> maybe_search(search)
     |> apply_json_filters(filters)
     |> order_by([d], [{^sort_order, ^sort_by}])
@@ -538,11 +537,14 @@ defmodule ReplicantServer.Documents do
   end
 
   @doc """
-  Gets a live document in `collection:curated` by ID.
+  Gets a live document in a public collection by ID; nil when `id` is not a UUID.
   """
-  def get_public_document(id), do: Repo.one(from d in curated_query(), where: d.id == ^id)
-
-  defp curated_query, do: Scopes.documents_query(Scopes.collection(Collections.curated()))
+  def get_public_document(id) do
+    case Ecto.UUID.cast(id) do
+      {:ok, id} -> Repo.one(from d in Scopes.public_documents_query(), where: d.id == ^id)
+      :error -> nil
+    end
+  end
 
   @doc """
   Creates an authorless publication in `collection:curated` (the admin

@@ -1,7 +1,8 @@
 defmodule ReplicantServer.DocumentsVisibilityTest do
   use ReplicantServer.DataCase
 
-  alias ReplicantServer.{Accounts, Documents, Publications}
+  alias ReplicantServer.{Accounts, Collections, Documents, Publications}
+  alias ReplicantServer.Collections.Collection
   alias ReplicantServer.Documents.Document
   alias ReplicantServer.Repo
 
@@ -25,6 +26,72 @@ defmodule ReplicantServer.DocumentsVisibilityTest do
 
     refute pub.id in (Documents.list_public_documents() |> Enum.map(& &1.id))
     refute Documents.get_public_document(pub.id)
+  end
+
+  defp user_publication(title) do
+    {:ok, user} = Accounts.get_or_create_user("author@example.com")
+
+    {:ok, source} =
+      Documents.create_document(user.id, %{id: Ecto.UUID.generate(), content: %{"title" => title}})
+
+    {:ok, pub} = Publications.publish(user.id, source.id)
+    {user, pub}
+  end
+
+  defp public_ids, do: Documents.list_public_documents() |> Enum.map(& &1.id)
+
+  test "public readers include a publication in any public collection, once" do
+    {_user, pub} = user_publication("Packed")
+    Repo.insert!(%Collection{name: "packs", access: "public"})
+    {:ok, _} = Collections.add("packs", pub.id)
+
+    assert pub.id in public_ids()
+    assert Documents.get_public_document(pub.id)
+
+    {:ok, _} = Collections.add(Collections.curated(), pub.id)
+    assert Enum.count(public_ids(), &(&1 == pub.id)) == 1
+    assert Documents.get_public_document(pub.id)
+  end
+
+  test "public readers skip a publication in a private collection" do
+    {user, pub} = user_publication("Private pack")
+    Repo.insert!(%Collection{name: "mine", owner_id: user.id, access: "private"})
+    {:ok, _} = Collections.add("mine", pub.id)
+
+    refute pub.id in public_ids()
+    refute Documents.get_public_document(pub.id)
+  end
+
+  test "a publication leaves the public readers when removed from its collection" do
+    {:ok, pub} = Documents.create_public_document(%{content: %{"title" => "Leaving"}})
+    {:ok, _} = Collections.remove(Collections.curated(), pub.id)
+
+    refute pub.id in public_ids()
+    refute Documents.get_public_document(pub.id)
+  end
+
+  test "a deleted public document leaves the public readers" do
+    {:ok, pub} = Documents.create_public_document(%{content: %{"title" => "Gone"}})
+    {:ok, _} = Documents.delete_public_document(pub.id)
+
+    refute pub.id in public_ids()
+    refute Documents.get_public_document(pub.id)
+  end
+
+  test "get_public_document returns nil for an id that is not a UUID" do
+    assert Documents.get_public_document("not-a-uuid") == nil
+  end
+
+  test "list_public_documents searches and sorts public documents" do
+    {:ok, a} = Documents.create_public_document(%{content: %{"title" => "Alpha scale"}})
+    {:ok, b} = Documents.create_public_document(%{content: %{"title" => "Beta scale"}})
+    {:ok, _} = Documents.create_public_document(%{content: %{"title" => "Other"}})
+
+    ids =
+      Documents.list_public_documents(search: "scale", sort_by: :title, sort_order: :asc)
+      |> Enum.map(& &1.id)
+
+    assert ids == [a.id, b.id]
   end
 
   test "public readers skip an owned document marked public" do
